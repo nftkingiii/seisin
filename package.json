@@ -1,0 +1,23 @@
+{
+  "name": "seisin",
+  "version": "1.0.0",
+  "description": "Verifiable ownership for memo-indexed Zcash assets",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "private": "true",
+  "dependencies": {
+    "@noble/curves": "^2.4.0",
+    "@noble/hashes": "^2.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

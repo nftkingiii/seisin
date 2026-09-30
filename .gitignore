@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+*.local
+PROJECT_STATE.md
+HACK_EVENT_GATE.json
+SOURCES.md
+notes/
