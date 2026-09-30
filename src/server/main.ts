@@ -41,6 +41,13 @@ function issuerSeed(): Uint8Array {
   return hexToBytes(readFileSync(f, "utf8").trim());
 }
 const issuer = issuerSeed();
+
+// Locally, an operator token is created once beside the database; production sets OPERATOR_TOKEN.
+if (!env.operatorToken && !process.env.RAILWAY_ENVIRONMENT) {
+  const f = join(dirname(env.data), "operator.token");
+  if (!existsSync(f)) writeFileSync(f, randomBytes(24).toString("hex"), { mode: 0o600 });
+  env.operatorToken = readFileSync(f, "utf8").trim();
+}
 const issuerKey = (id: number) => ownerKey(issuer, env.collection, id, 0);
 
 const store = new Store(env.data);
@@ -233,6 +240,10 @@ createServer(async (req, res) => {
   const path = new URL(req.url ?? "/", "http://x").pathname;
   try {
     if (path === "/health") return send(res, 200, { ok: true, commit: env.commit, collection: store.collection(), head: store.epochs().length - 1 });
+    if (path === "/SPEC.md") {
+      res.writeHead(200, { "content-type": "text/markdown; charset=utf-8" });
+      return res.end(readFileSync(join(root, "SPEC.md")));
+    }
     if (path.startsWith("/api/")) return await api(req, res, path);
     serveStatic(res, path);
   } catch (e) {

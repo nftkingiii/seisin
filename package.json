@@ -6,7 +6,10 @@
   "scripts": {
     "test": "node --import tsx --test test/*.test.ts",
     "start": "node --import tsx src/server/main.ts",
-    "dev:server": "node --watch --import tsx src/server/main.ts"
+    "dev:server": "node --watch --import tsx src/server/main.ts",
+    "build": "vite build web",
+    "dev:web": "vite web",
+    "typecheck": "tsc -p . && tsc -p web"
   },
   "keywords": [],
   "author": "",
@@ -15,12 +18,20 @@
   "private": "true",
   "dependencies": {
     "@noble/curves": "^2.4.0",
-    "@noble/hashes": "^2.4.0"
+    "@noble/hashes": "^2.4.0",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
     "tsx": "^4.23.15",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1"
   },
   "engines": {
     "node": ">=24"
