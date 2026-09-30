@@ -35,9 +35,13 @@ before(async () => {
   throw new Error("server did not start");
 });
 
-after(() => {
-  proc.kill();
-  rmSync(dir, { recursive: true, force: true });
+after(async () => {
+  // Windows keeps the database locked until the server process has exited.
+  await new Promise((r) => {
+    proc.once("exit", r);
+    proc.kill();
+  });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 });
 
 test("issue, seal, resell, prove, and replay the public log", async () => {
