@@ -32,7 +32,10 @@ const toB64 = (o: unknown) => btoa(JSON.stringify(o)).replace(/\+/g, "-").replac
 const fromB64 = (s: string) => JSON.parse(atob(s.replace(/-/g, "+").replace(/_/g, "/")));
 
 export function App() {
-  const [tab, setTab] = useState<Tab>(() => (location.hash.slice(1) as Tab) || "registry");
+  const [tab, setTab] = useState<Tab>(() => {
+    const t = location.hash.slice(1) as Tab;
+    return TABS.some((x) => x.id === t) ? t : "registry";
+  });
   const [view, setView] = useState<RegistryView | null>(null);
   const [log, setLog] = useState<Log | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +54,16 @@ export function App() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Follow links and back/forward that change the hash after load.
+  useEffect(() => {
+    const onHash = () => {
+      const t = location.hash.slice(1) as Tab;
+      if (TABS.some((x) => x.id === t)) setTab(t);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
 
   const go = (t: Tab) => {
     setTab(t);
@@ -351,6 +364,7 @@ function VaultTab({ view, log, refresh }: { view: RegistryView; log: Log; refres
   const [seeded, setSeeded] = useState(() => vault.seed() !== null);
   const [backed, setBacked] = useState(() => vault.backedUp());
   const [restoring, setRestoring] = useState(false);
+  const toast = useToast();
 
   if (!seeded)
     return (
@@ -409,7 +423,7 @@ function VaultTab({ view, log, refresh }: { view: RegistryView; log: Log; refres
               </span>
               <div>
                 <strong>{backed ? "Backup confirmed" : "Back up your vault"}</strong>
-                {backed ? <p>You typed it back correctly.</p> : <BackupConfirm onDone={() => setBacked(true)} />}
+                {backed ? <p>You typed it back correctly.</p> : <BackupConfirm onDone={() => { setBacked(true); toast(true, "Backup confirmed."); }} />}
               </div>
             </li>
             <li className={hasToken ? "done" : backed ? "now" : ""}>
