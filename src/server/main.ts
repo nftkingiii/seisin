@@ -27,6 +27,12 @@ const env = {
   commit: process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.COMMIT ?? "local",
 };
 
+// Catch a pasted transparent address or a spending key before anything is published.
+if (env.anchorAddress && !/^u1[0-9a-z]{100,}$/.test(env.anchorAddress))
+  throw new Error("ANCHOR_ADDRESS must be a mainnet unified address starting with u1 (not a t1 transparent address)");
+if (env.anchorUivk && !/^(uivk1|uview1)[0-9a-z]{100,}$/.test(env.anchorUivk))
+  throw new Error("ANCHOR_UIVK must be a mainnet viewing key starting with uivk1 or uview1; never a spending key or seed phrase");
+
 mkdirSync(dirname(env.data), { recursive: true });
 
 /*

@@ -5,8 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "node --import tsx --test test/*.test.ts",
-    "start": "node --import tsx src/server/main.ts",
-    "dev:server": "node --watch --import tsx src/server/main.ts",
+    "start": "node --env-file-if-exists=.env --import tsx src/server/main.ts",
+    "dev:server": "node --env-file-if-exists=.env --watch --import tsx src/server/main.ts",
     "build": "vite build web",
     "dev:web": "vite web",
     "typecheck": "tsc -p . && tsc -p web"
