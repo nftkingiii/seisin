@@ -148,6 +148,32 @@ function registryView() {
   };
 }
 
+// Checks a mined transaction for the epoch's anchor note, with the registry's viewing key, then records it.
+async function recordAnchor(epoch: unknown, txid: unknown) {
+  if (!env.anchorAddress || !env.anchorUivk) throw new HttpError(409, "ANCHOR_ADDRESS and ANCHOR_UIVK are not configured");
+  const row = typeof epoch === "number" ? store.epochs()[epoch] : undefined;
+  if (!row) throw new HttpError(404, "no such epoch");
+  if (typeof txid !== "string" || !/^[0-9a-f]{64}$/.test(txid)) throw new HttpError(400, "txid must be 32 bytes of hex");
+  const chain = blockchair();
+  const { hex } = await chain.tx(txid);
+  const found = JSON.parse(make(hex, env.anchorUivk)) as { proof: string }[];
+  const errors: string[] = [];
+  for (const f of found) {
+    try {
+      const a = await checkAnchor({ txid, proof: f.proof }, env.anchorAddress, chain, zdp);
+      if (recordHash(a.record) !== row.hash) {
+        errors.push(`memo is epoch ${a.record.epoch} with a different hash`);
+        continue;
+      }
+      store.setAnchor(epoch as number, { txid, proof: f.proof, height: a.height });
+      return { anchored: epoch as number, txid, height: a.height, proof: f.proof };
+    } catch (e) {
+      errors.push((e as Error).message);
+    }
+  }
+  throw new HttpError(422, found.length ? `no matching anchor note: ${errors.join("; ")}` : "the anchor key sees no note in that transaction");
+}
+
 // ---- routes ----
 
 async function api(req: IncomingMessage, res: ServerResponse, path: string) {
@@ -193,29 +219,28 @@ async function api(req: IncomingMessage, res: ServerResponse, path: string) {
 
   if (m === "POST" && path === "/api/operator/anchor") {
     requireOperator(req);
-    if (!env.anchorAddress || !env.anchorUivk) throw new HttpError(409, "ANCHOR_ADDRESS and ANCHOR_UIVK are not configured");
     const { epoch, txid } = await body(req);
-    const row = store.epochs()[epoch];
-    if (!row) throw new HttpError(404, "no such epoch");
-    if (typeof txid !== "string" || !/^[0-9a-f]{64}$/.test(txid)) throw new HttpError(400, "txid must be 32 bytes of hex");
-    const chain = blockchair();
-    const { hex } = await chain.tx(txid);
-    const found = JSON.parse(make(hex, env.anchorUivk)) as { proof: string }[];
-    const errors: string[] = [];
-    for (const f of found) {
-      try {
-        const a = await checkAnchor({ txid, proof: f.proof }, env.anchorAddress, chain, zdp);
-        if (recordHash(a.record) !== row.hash) {
-          errors.push(`memo is epoch ${a.record.epoch} with a different hash`);
-          continue;
-        }
-        store.setAnchor(epoch, { txid, proof: f.proof, height: a.height });
-        return send(res, 200, { anchored: epoch, txid, height: a.height, proof: f.proof });
-      } catch (e) {
-        errors.push((e as Error).message);
-      }
+    return send(res, 200, await recordAnchor(epoch, txid));
+  }
+
+  /*
+   * Moving a registry to a new host: replay the public log from genesis, then
+   * re-check every anchor against mainnet. Only allowed on an empty registry
+   * whose genesis matches, so it can never rewrite history.
+   */
+  if (m === "POST" && path === "/api/operator/import") {
+    requireOperator(req);
+    const { genesis: g, batches, anchors } = await body(req);
+    if (store.epochs().length !== 1 || store.pending().length) throw new HttpError(409, "import needs an empty registry");
+    if (JSON.stringify(g) !== JSON.stringify(store.genesisOwners())) throw new HttpError(409, "genesis does not match this registry's issuer keys");
+    if (!Array.isArray(batches) || !batches.every((b: unknown) => Array.isArray(b) && b.every(isChange))) throw new HttpError(400, "batches must be arrays of changes");
+    for (const b of batches as Change[][]) {
+      for (const c of b) store.submit(c, "imported");
+      store.seal();
     }
-    throw new HttpError(422, found.length ? `no matching anchor note: ${errors.join("; ")}` : "the anchor key sees no note in that transaction");
+    const done = [];
+    for (const a of (anchors ?? []) as { epoch: number; txid: string }[]) done.push(await recordAnchor(a.epoch, a.txid));
+    return send(res, 200, { head: store.epochs().length - 1, anchored: done.map((d) => ({ epoch: d.anchored, height: d.height })) });
   }
 
   throw new HttpError(404, "not found");
