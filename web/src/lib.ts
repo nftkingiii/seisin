@@ -93,7 +93,7 @@ export async function audit(view: RegistryView, log: Log): Promise<Step[]> {
     steps.push({
       label: "History replays",
       ok: bad.length === 0 && recs.length === view.epochs.length,
-      detail: bad.length ? `epoch ${bad.map((b) => b.epoch).join(", ")} does not match the log` : `${recs.length} records rebuilt from the public log, every signature checked`,
+      detail: bad.length ? `epoch ${bad.map((b) => b.epoch).join(", ")} does not match the log` : `${recs.length} record${recs.length === 1 ? "" : "s"} rebuilt from the public log, every signature checked`,
     });
   } catch (e) {
     steps.push({ label: "History replays", ok: false, detail: (e as Error).message });
@@ -112,7 +112,7 @@ export async function audit(view: RegistryView, log: Log): Promise<Step[]> {
     steps.push({
       label: "Anchored on Zcash",
       ok: true,
-      detail: `epoch ${anchored.epoch} is in a ${a.pool} note mined at height ${a.height}, checked here with no key; it commits to every earlier record`,
+      detail: `epoch ${anchored.epoch} is in ${a.pool === "ironwood" || a.pool === "orchard" ? "an" : "a"} ${a.pool[0].toUpperCase() + a.pool.slice(1)} note mined at height ${a.height}, checked here with no key${anchored.epoch > 0 ? "; it commits to every earlier record" : ""}`,
     });
   } catch (e) {
     steps.push({ label: "Anchored on Zcash", ok: false, detail: (e as Error).message });
