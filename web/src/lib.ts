@@ -126,6 +126,7 @@ export async function audit(view: RegistryView, log: Log): Promise<Step[]> {
 
 const SEED = "seisin.seed";
 const USED = "seisin.used"; // { "<col>:<tokenId>": highest n handed out }
+const BACKED = "seisin.backed";
 
 function read(k: string): string | null {
   try {
@@ -154,6 +155,7 @@ export const vault = {
     const h = hex.trim().toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(h)) throw new Error("a backup is 64 hex characters");
     write(SEED, h);
+    write(BACKED, "1"); // restoring from a backup proves the holder has one
   },
   backup(): string | null {
     return read(SEED);
@@ -162,7 +164,18 @@ export const vault = {
     try {
       localStorage.removeItem(SEED);
       localStorage.removeItem(USED);
+      localStorage.removeItem(BACKED);
     } catch {}
+  },
+  /** Whether the holder has proved they wrote the backup down, by typing part of it back. */
+  backedUp(): boolean {
+    return read(BACKED) === "1";
+  },
+  confirmBackup(tail: string): boolean {
+    const b = read(SEED);
+    const ok = !!b && tail.trim().toLowerCase() === b.slice(-6);
+    if (ok) write(BACKED, "1");
+    return ok;
   },
   used(col: string, id: number): number {
     const m = JSON.parse(read(USED) ?? "{}");

@@ -17,6 +17,7 @@ import {
 } from "./lib";
 
 import { IconRegistry, IconVault, IconVerify, IconOperator, IconCheck, IconCross, IconCopy, IconSeal, IconBook, IconCode, Mark } from "./icons";
+import { useToast, HoldButton, Stepper } from "./behaviors";
 
 type Tab = "registry" | "vault" | "verify" | "operator";
 const TABS: { id: Tab; label: string; icon: () => ReactNode; title: string; sub: string }[] = [
@@ -173,6 +174,9 @@ function Copy({ text, label = "Copy" }: { text: string; label?: string }) {
       }}
     >
       {done ? <IconCheck /> : <IconCopy />}
+      <span className={done ? "copied on" : "copied"} aria-live="polite">
+        {done ? "Copied" : ""}
+      </span>
     </button>
   );
 }
@@ -345,8 +349,8 @@ function Chain({ view }: { view: RegistryView }) {
 
 function VaultTab({ view, log, refresh }: { view: RegistryView; log: Log; refresh: () => Promise<void> }) {
   const [seeded, setSeeded] = useState(() => vault.seed() !== null);
+  const [backed, setBacked] = useState(() => vault.backedUp());
   const [restoring, setRestoring] = useState(false);
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   if (!seeded)
     return (
@@ -354,11 +358,14 @@ function VaultTab({ view, log, refresh }: { view: RegistryView; log: Log; refres
         <p className="muted">Your vault is a secret kept in this browser. Each token you receive gets its own one-time key from it, so your tokens cannot be linked to each other or to your Zcash wallet.</p>
         {restoring ? (
           <RestoreForm
-            onDone={() => setSeeded(true)}
+            onDone={() => {
+              setSeeded(true);
+              setBacked(true);
+            }}
             onCancel={() => setRestoring(false)}
           />
         ) : (
-          <div className="row">
+          <div className="row" style={{ marginTop: 16 }}>
             <button
               className="primary"
               onClick={() => {
@@ -379,35 +386,117 @@ function VaultTab({ view, log, refresh }: { view: RegistryView; log: Log; refres
   const head = stateAt(log, view.head);
   const held = head.owners.map((_, id) => ({ id, key: vault.keyFor(head, id) })).filter((h) => h.key);
   const waiting = view.pending.filter((p) => vault.used(view.collection, p.tokenId) >= 0 && !held.some((h) => h.id === p.tokenId));
+  const hasToken = held.length + waiting.length > 0;
+
+  // Setup checklist: exactly one next action is open at a time.
+  if (!backed || !hasToken)
+    return (
+      <>
+        <Section title="Set up your vault">
+          <ol className="tasks">
+            <li className="done">
+              <span className="dot" aria-hidden>
+                <IconCheck />
+              </span>
+              <div>
+                <strong>Vault created</strong>
+                <p>A secret now lives in this browser.</p>
+              </div>
+            </li>
+            <li className={backed ? "done" : "now"}>
+              <span className="dot" aria-hidden>
+                {backed ? <IconCheck /> : 2}
+              </span>
+              <div>
+                <strong>{backed ? "Backup confirmed" : "Back up your vault"}</strong>
+                {backed ? <p>You typed it back correctly.</p> : <BackupConfirm onDone={() => setBacked(true)} />}
+              </div>
+            </li>
+            <li className={hasToken ? "done" : backed ? "now" : ""}>
+              <span className="dot" aria-hidden>
+                {hasToken ? <IconCheck /> : 3}
+              </span>
+              <div>
+                <strong>Receive your first token</strong>
+                {backed && !hasToken && (
+                  <>
+                    <p>Ask a seller for a token with a receive code below{view.demoIssuance ? ", or claim a free demo token" : ""}.</p>
+                    {view.demoIssuance && <DemoClaim view={view} refresh={refresh} />}
+                  </>
+                )}
+              </div>
+            </li>
+          </ol>
+        </Section>
+        {backed && <ReceivePanel view={view} />}
+      </>
+    );
 
   return (
     <>
-      {msg && <p className={msg.ok ? "notice" : "alert"}>{msg.text}</p>}
-      <Section title="Your tokens">
-        {held.length === 0 && waiting.length === 0 ? (
-          <p className="muted">This vault holds nothing yet.</p>
-        ) : (
-          <ul className="deeds">
-            {held.map((h) => (
-              <HeldToken key={h.id} id={h.id} view={view} log={log} refresh={refresh} setMsg={setMsg} />
-            ))}
-            {waiting.map((p) => (
-              <li key={`w${p.tokenId}`} className="deed">
-                <div className="deed-head">
-                  <span className="deed-id">No. {p.tokenId}</span>
-                  <span className="pill wait">waiting for the next epoch</span>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-        {view.demoIssuance && <DemoClaim view={view} log={log} refresh={refresh} setMsg={setMsg} />}
+      <Section title="Your tokens" aside={<span className="small">{held.length} held{waiting.length ? ` · ${waiting.length} arriving` : ""}</span>}>
+        <ul className="deeds">
+          {held.map((h) => (
+            <HeldToken key={h.id} id={h.id} view={view} log={log} refresh={refresh} />
+          ))}
+          {waiting.map((p) => (
+            <li key={`w${p.tokenId}`} className="deed arriving">
+              <div className="deed-head">
+                <span className="deed-id">No. {p.tokenId}</span>
+                <span className="pill wait">arrives with epoch {view.head + 1}</span>
+              </div>
+            </li>
+          ))}
+        </ul>
+        {view.demoIssuance && <DemoClaim view={view} refresh={refresh} />}
       </Section>
       <ReceivePanel view={view} />
       <Section title="Backup">
-        <BackupPanel onForget={() => setSeeded(false)} />
+        <BackupPanel onForget={() => { setSeeded(false); setBacked(false); }} />
       </Section>
     </>
+  );
+}
+
+function BackupConfirm({ onDone }: { onDone: () => void }) {
+  const [stage, setStage] = useState<"show" | "check">("show");
+  const [tail, setTail] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  return stage === "show" ? (
+    <>
+      <p>Write this down somewhere offline. Anyone with it can move your tokens, and without it a lost browser means lost tokens.</p>
+      <Code>{vault.backup() ?? ""}</Code>
+      <div className="row" style={{ marginTop: 12 }}>
+        <button className="primary" onClick={() => setStage("check")}>
+          I wrote it down
+        </button>
+      </div>
+    </>
+  ) : (
+    <form
+      className="stack"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (vault.confirmBackup(tail)) onDone();
+        else setErr("That does not match the end of your backup. Check what you wrote down.");
+      }}
+    >
+      <label htmlFor="tail">Type the last 6 characters of your backup</label>
+      <input id="tail" className="narrow" value={tail} maxLength={6} onChange={(e) => { setTail(e.target.value); setErr(null); }} autoComplete="off" spellCheck={false} aria-invalid={!!err} aria-describedby={err ? "tail-err" : undefined} />
+      {err && (
+        <p className="field-err" id="tail-err">
+          {err}
+        </p>
+      )}
+      <div className="row">
+        <button className="primary" type="submit" disabled={tail.trim().length !== 6}>
+          Confirm backup
+        </button>
+        <button className="link" type="button" onClick={() => setStage("show")}>
+          Show it again
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -428,10 +517,10 @@ function RestoreForm({ onDone, onCancel }: { onDone: () => void; onCancel: () =>
       }}
     >
       <label htmlFor="restore">Backup</label>
-      <input id="restore" value={v} onChange={(e) => setV(e.target.value)} autoComplete="off" spellCheck={false} />
-      {err && <p className="alert">{err}</p>}
+      <input id="restore" value={v} onChange={(e) => { setV(e.target.value); setErr(null); }} autoComplete="off" spellCheck={false} aria-invalid={!!err} />
+      {err && <p className="field-err">{err}</p>}
       <div className="row">
-        <button className="primary" type="submit">
+        <button className="primary" type="submit" disabled={!v.trim()}>
           Restore
         </button>
         <button className="link" type="button" onClick={onCancel}>
@@ -442,8 +531,9 @@ function RestoreForm({ onDone, onCancel }: { onDone: () => void; onCancel: () =>
   );
 }
 
-function DemoClaim({ view, refresh, setMsg }: { view: RegistryView; log: Log; refresh: () => Promise<void>; setMsg: (m: { ok: boolean; text: string } | null) => void }) {
+function DemoClaim({ view, refresh }: { view: RegistryView; refresh: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
+  const toast = useToast();
   return (
     <div className="demo-claim">
       <button
@@ -455,53 +545,78 @@ function DemoClaim({ view, refresh, setMsg }: { view: RegistryView; log: Log; re
             const owners = await fetch("/api/owners").then((r) => r.json());
             const queued = new Set(view.pending.map((p) => p.tokenId));
             const id = (owners.issuerHeld as boolean[]).findIndex((free, i) => free && !queued.has(i));
-            if (id < 0) throw new Error("every demo token has been handed out");
+            if (id < 0) throw new Error("Every demo token has been handed out.");
             const k = vault.fresh(view.collection, id);
             await api.post("/api/issue", { tokenId: id, to: k.public });
-            setMsg({ ok: true, text: `Token No. ${id} is on its way. It becomes yours when the operator seals the next epoch.` });
+            toast(true, `Token No. ${id} is on its way. It arrives when the operator seals epoch ${view.head + 1}.`);
             await refresh();
           } catch (e) {
-            setMsg({ ok: false, text: (e as Error).message });
+            toast(false, (e as Error).message);
           }
           setBusy(false);
         }}
       >
         {busy ? "Requesting…" : "Claim a demo token"}
       </button>
-      <span className="muted small">Free, demo only. A real collection sells its first transfer for ZEC.</span>
+      <span className="small">Free, demo only. A real collection sells its first transfer for ZEC.</span>
     </div>
   );
 }
 
-function HeldToken({ id, view, log, refresh, setMsg }: { id: number; view: RegistryView; log: Log; refresh: () => Promise<void>; setMsg: (m: { ok: boolean; text: string } | null) => void }) {
+type Review = { to: string; from: string };
+
+function HeldToken({ id, view, log, refresh }: { id: number; view: RegistryView; log: Log; refresh: () => Promise<void> }) {
   const [mode, setMode] = useState<"none" | "prove" | "send">("none");
   const [input, setInput] = useState("");
+  const [err, setErr] = useState<string | null>(null);
   const [out, setOut] = useState<string | null>(null);
+  const [review, setReview] = useState<Review | null>(null);
   const [busy, setBusy] = useState(false);
+  const toast = useToast();
+
+  const open = (m: "prove" | "send") => {
+    setMode(mode === m ? "none" : m);
+    setInput("");
+    setErr(null);
+    setOut(null);
+    setReview(null);
+  };
 
   const prove = () => {
     const m = input.trim().match(new RegExp(`^${CHAL}:([a-z0-9-]+):([0-9a-f]{64})$`));
-    if (!m) throw new Error("paste a challenge that starts with seisin-chal:");
-    if (m[1] !== view.collection) throw new Error(`that challenge is for ${m[1]}, not ${view.collection}`);
+    if (!m) throw new Error("Paste a challenge that starts with seisin-chal:");
+    if (m[1] !== view.collection) throw new Error(`That challenge is for ${m[1]}, not ${view.collection}.`);
     const epoch = view.latestAnchored ?? view.head;
     const s = stateAt(log, epoch);
     const k = vault.keyFor(s, id);
-    if (!k) throw new Error(`you received this token after epoch ${epoch}, the latest anchored record; you can prove it once the operator anchors a newer one`);
-    const p = proveOwnership(s, id, k.secret, m[2]);
-    setOut(`seisin-proof:${toB64(p)}`);
+    if (!k) throw new Error(`You received this token after epoch ${epoch}, the latest anchored record. You can prove it once a newer record is anchored.`);
+    setOut(`seisin-proof:${toB64(proveOwnership(s, id, k.secret, m[2]))}`);
   };
 
-  const send = async () => {
+  const check = () => {
     const m = input.trim().match(new RegExp(`^${RECV}:([a-z0-9-]+):(\\d+):([0-9a-f]{64})$`));
-    if (!m) throw new Error("paste a receive code that starts with seisin-recv:");
-    if (m[1] !== view.collection || Number(m[2]) !== id) throw new Error(`that code is for token ${m[2]} in ${m[1]}`);
-    const s = stateAt(log, view.head);
-    const k = vault.keyFor(s, id)!;
-    const change = signTransfer(view.collection, view.head, { tokenId: id, from: k.public, to: m[3], ref: "00".repeat(32) }, k.secret);
-    await api.post("/api/transfers", { change });
-    setMsg({ ok: true, text: `Token No. ${id} is signed over. It moves when the operator seals the next epoch.` });
-    setMode("none");
-    await refresh();
+    if (!m) throw new Error("Paste a receive code that starts with seisin-recv:");
+    if (m[1] !== view.collection || Number(m[2]) !== id) throw new Error(`That code is for token No. ${m[2]} in ${m[1]}, not this one.`);
+    const k = vault.keyFor(stateAt(log, view.head), id)!;
+    if (m[3] === k.public) throw new Error("That code points back at your own key.");
+    setReview({ to: m[3], from: k.public });
+  };
+
+  const commit = async () => {
+    setBusy(true);
+    try {
+      const k = vault.keyFor(stateAt(log, view.head), id)!;
+      const change = signTransfer(view.collection, view.head, { tokenId: id, from: k.public, to: review!.to, ref: "00".repeat(32) }, k.secret);
+      await api.post("/api/transfers", { change });
+      toast(true, `Token No. ${id} is signed over. It moves when the operator seals epoch ${view.head + 1}.`);
+      setMode("none");
+      setReview(null);
+      await refresh();
+    } catch (e) {
+      toast(false, (e as Error).message);
+      setReview(null);
+    }
+    setBusy(false);
   };
 
   const pending = view.pending.some((p) => p.tokenId === id);
@@ -511,46 +626,77 @@ function HeldToken({ id, view, log, refresh, setMsg }: { id: number; view: Regis
       <div className="deed-head">
         <span className="deed-id">No. {id}</span>
         {pending ? (
-          <span className="pill wait">transfer waiting for the next epoch</span>
+          <span className="pill wait">leaves with epoch {view.head + 1}</span>
         ) : (
           <div className="row">
-            <button className={mode === "prove" ? "ghost on" : "ghost"} onClick={() => { setMode(mode === "prove" ? "none" : "prove"); setInput(""); setOut(null); }}>
+            <button className={mode === "prove" ? "ghost on" : "ghost"} aria-expanded={mode === "prove"} onClick={() => open("prove")}>
               Prove
             </button>
-            <button className={mode === "send" ? "ghost on" : "ghost"} onClick={() => { setMode(mode === "send" ? "none" : "send"); setInput(""); setOut(null); }}>
+            <button className={mode === "send" ? "ghost on" : "ghost"} aria-expanded={mode === "send"} onClick={() => open("send")}>
               Transfer
             </button>
           </div>
         )}
       </div>
-      {mode !== "none" && (
+
+      {mode !== "none" && !review && (
         <form
           className="stack"
-          onSubmit={async (e) => {
+          onSubmit={(e) => {
             e.preventDefault();
-            setBusy(true);
             try {
-              mode === "prove" ? prove() : await send();
+              mode === "prove" ? prove() : check();
             } catch (x) {
-              setMsg({ ok: false, text: (x as Error).message });
+              setErr((x as Error).message);
             }
-            setBusy(false);
           }}
         >
           <label htmlFor={`in${id}`}>{mode === "prove" ? "Verifier's challenge" : "Receiver's code"}</label>
-          <input id={`in${id}`} value={input} onChange={(e) => setInput(e.target.value)} autoComplete="off" spellCheck={false} />
+          <input id={`in${id}`} value={input} onChange={(e) => { setInput(e.target.value); setErr(null); }} autoComplete="off" spellCheck={false} aria-invalid={!!err} aria-describedby={err ? `err${id}` : undefined} />
+          {err && (
+            <p className="field-err" id={`err${id}`}>
+              {err}
+            </p>
+          )}
           <div className="row">
-            <button className="primary" type="submit" disabled={busy || !input.trim()}>
-              {mode === "prove" ? "Create proof" : busy ? "Signing…" : "Sign and transfer"}
+            <button className="primary" type="submit" disabled={!input.trim()}>
+              {mode === "prove" ? "Create proof" : "Review transfer"}
             </button>
           </div>
           {out && (
-            <>
-              <p className="muted small">Send this back to the verifier. It shows only that this token's current key answered their challenge.</p>
+            <div className="milestone">
+              <strong>Proof ready</strong>
+              <p>Send this back to the verifier. It shows only that this token's current key answered their challenge.</p>
               <Code>{out}</Code>
-            </>
+            </div>
           )}
         </form>
+      )}
+
+      {review && (
+        <div className="review">
+          <dl>
+            <dt>Token</dt>
+            <dd>No. {id}</dd>
+            <dt>From</dt>
+            <dd>
+              <code>your key {short(review.from, 8)}</code>
+            </dd>
+            <dt>To</dt>
+            <dd>
+              <code>{short(review.to, 8)}</code>
+            </dd>
+            <dt>Takes effect</dt>
+            <dd>when epoch {view.head + 1} is sealed</dd>
+          </dl>
+          <p className="small">Once sealed this cannot be undone. Only the new holder can move it after that.</p>
+          <div className="row">
+            <HoldButton label="Hold to sign over" doneLabel="Signed" disabled={busy} onCommit={commit} />
+            <button className="link" type="button" onClick={() => setReview(null)} disabled={busy}>
+              Back
+            </button>
+          </div>
+        </div>
       )}
     </li>
   );
@@ -564,6 +710,7 @@ function ReceivePanel({ view }: { view: RegistryView }) {
       <p className="muted">Give the seller a one-time code. It names a fresh key that has never been used, so the sale cannot be linked to anything else in your vault.</p>
       <form
         className="row"
+        style={{ marginTop: 16 }}
         onSubmit={(e) => {
           e.preventDefault();
           const n = Number(id);
@@ -592,7 +739,7 @@ function BackupPanel({ onForget }: { onForget: () => void }) {
     <div className="stack">
       <p className="muted">Anyone with this backup can move your tokens. Keep it offline.</p>
       <div className="row">
-        <button className="ghost" onClick={() => setShow(!show)}>
+        <button className="ghost" onClick={() => setShow(!show)} aria-expanded={show}>
           {show ? "Hide backup" : "Show backup"}
         </button>
         {confirm ? (
@@ -629,7 +776,7 @@ function VerifyTab({ view, log }: { view: RegistryView; log: Log }) {
     try {
       p = fromB64(proof.trim().replace(/^seisin-proof:/, ""));
     } catch {
-      return setResult({ ok: false, steps: [{ label: "Readable proof", ok: false, detail: "that is not a Seisin proof" }] });
+      return setResult({ ok: false, steps: [{ label: "Readable proof", ok: false, detail: "That is not a Seisin proof." }] });
     }
     const target = view.epochs.find((e) => e.epoch === (view.latestAnchored ?? view.head))!;
     if (target.anchor) {
@@ -650,18 +797,21 @@ function VerifyTab({ view, log }: { view: RegistryView; log: Log }) {
     setResult({ ok: steps.every((s) => s.ok), steps, p });
   };
 
+  const at = result ? 2 : nonce ? 1 : 0;
+
   return (
     <>
-      <Section title="1. Send a challenge">
+      <Stepper steps={["Send a challenge", "Check their proof", "Result"]} at={at} />
+      <Section title="Send a challenge">
         <p className="muted">A fresh challenge stops a holder from reusing an old proof or one made for someone else.</p>
-        <div className="row">
+        <div className="row" style={{ marginTop: 16 }}>
           <button className={nonce ? "secondary" : "primary"} onClick={() => { setNonce(randomHex32()); setResult(null); }}>
             {nonce ? "New challenge" : "Create a challenge"}
           </button>
         </div>
         {nonce && <Code>{`${CHAL}:${view.collection}:${nonce}`}</Code>}
       </Section>
-      <Section title="2. Check their proof">
+      <Section title="Check their proof">
         <form
           className="stack"
           onSubmit={async (e) => {
@@ -672,25 +822,33 @@ function VerifyTab({ view, log }: { view: RegistryView; log: Log }) {
           }}
         >
           <label htmlFor="proof">Proof from the holder</label>
-          <textarea id="proof" rows={3} value={proof} onChange={(e) => setProof(e.target.value)} spellCheck={false} />
+          <textarea id="proof" rows={3} value={proof} onChange={(e) => setProof(e.target.value)} spellCheck={false} disabled={!nonce} placeholder={nonce ? "seisin-proof:…" : "Create a challenge first"} />
           <div className="row">
             <button className="primary" type="submit" disabled={!nonce || !proof.trim() || busy}>
               {busy ? "Checking…" : "Check proof"}
             </button>
           </div>
         </form>
-        {result && (
-          <div className={result.ok ? "verdict ok" : "verdict bad"}>
-            <h3>{result.ok ? `Holder of No. ${result.p?.tokenId} confirmed` : "Not confirmed"}</h3>
-            <StepList steps={result.steps} />
-            {result.ok && (
-              <p className="muted small">
-                You learned that one token is held by the key that answered you. You did not learn their Zcash address, their other tokens, or who they bought from.
-              </p>
-            )}
-          </div>
-        )}
       </Section>
+      {result && (
+        <section className={result.ok ? "certificate ok" : "certificate bad"} aria-live="polite">
+          <div className="cert-head">
+            <span className="cert-seal" aria-hidden>
+              {result.ok ? <IconSeal /> : <IconCross />}
+            </span>
+            <div>
+              <h3>{result.ok ? `Holder of No. ${result.p?.tokenId} confirmed` : "Not confirmed"}</h3>
+              <p className="small">{result.ok ? "Every check passed." : `${result.steps.filter((s) => !s.ok).length} of ${result.steps.length} checks did not pass.`}</p>
+            </div>
+          </div>
+          <StepList steps={result.steps} />
+          {result.ok && (
+            <p className="small" style={{ marginTop: 14 }}>
+              You learned that one token is held by the key that answered you. You did not learn their Zcash address, their other tokens, or who they bought from.
+            </p>
+          )}
+        </section>
+      )}
     </>
   );
 }
@@ -699,7 +857,7 @@ function VerifyTab({ view, log }: { view: RegistryView; log: Log }) {
 
 function OperatorTab({ view, refresh }: { view: RegistryView; refresh: () => Promise<void> }) {
   const [token, setToken] = useState(() => sessionStorage.getItem("seisin.op") ?? "");
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const toast = useToast();
   const [busy, setBusy] = useState(false);
   const head = view.epochs[view.epochs.length - 1];
   const needsAnchor = !head.anchor;
@@ -707,10 +865,10 @@ function OperatorTab({ view, refresh }: { view: RegistryView; refresh: () => Pro
   const act = async (fn: () => Promise<string>) => {
     setBusy(true);
     try {
-      setMsg({ ok: true, text: await fn() });
+      toast(true, await fn());
       await refresh();
     } catch (e) {
-      setMsg({ ok: false, text: (e as Error).message });
+      toast(false, (e as Error).message);
     }
     setBusy(false);
   };
@@ -730,7 +888,6 @@ function OperatorTab({ view, refresh }: { view: RegistryView; refresh: () => Pro
           }}
         />
       </Section>
-      {msg && <p className={msg.ok ? "notice" : "alert"}>{msg.text}</p>}
       <Section title="Seal the next epoch">
         {view.pending.length === 0 ? (
           <p className="muted">No signed changes are waiting.</p>
