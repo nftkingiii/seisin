@@ -10,7 +10,9 @@ import { encodeMemo } from "../core/memo.js";
 import { checkAnchor, blockchair } from "../core/anchor.js";
 import { hexToBytes } from "../core/bytes.js";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+// The project root: two levels up from src/server when run from source, one level up from dist/ when bundled.
+const here = dirname(fileURLToPath(import.meta.url));
+const root = existsSync(join(here, "../package.json")) ? resolve(here, "..") : resolve(here, "../..");
 initSync({ module: readFileSync(join(root, "vendor/zcash-delivery-proof/zcash_delivery_proof_wasm_bg.wasm")) });
 const zdp = { check, addressHasReceiver };
 

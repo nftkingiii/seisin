@@ -5,11 +5,12 @@
   "main": "index.js",
   "scripts": {
     "test": "node --import tsx --test test/*.test.ts",
-    "start": "node --env-file-if-exists=.env --import tsx src/server/main.ts",
+    "start": "node --env-file-if-exists=.env dist/server.mjs",
     "dev:server": "node --env-file-if-exists=.env --watch --import tsx src/server/main.ts",
-    "build": "vite build web",
+    "build": "vite build web && npm run build:server",
     "dev:web": "vite web",
-    "typecheck": "tsc -p . && tsc -p web"
+    "typecheck": "tsc -p . && tsc -p web",
+    "build:server": "esbuild src/server/main.ts --bundle --platform=node --format=esm --target=node24 --packages=external --outfile=dist/server.mjs"
   },
   "keywords": [],
   "author": "",
