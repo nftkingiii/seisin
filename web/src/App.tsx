@@ -16,12 +16,14 @@ import {
   type Step,
 } from "./lib";
 
+import { IconRegistry, IconVault, IconVerify, IconOperator, IconCheck, IconCross, IconCopy, IconSeal, IconBook, IconCode, Mark } from "./icons";
+
 type Tab = "registry" | "vault" | "verify" | "operator";
-const TABS: { id: Tab; label: string }[] = [
-  { id: "registry", label: "Registry" },
-  { id: "vault", label: "Vault" },
-  { id: "verify", label: "Verify" },
-  { id: "operator", label: "Operator" },
+const TABS: { id: Tab; label: string; icon: () => ReactNode; title: string; sub: string }[] = [
+  { id: "registry", label: "Registry", icon: IconRegistry, title: "Registry", sub: "Every record, rebuilt from the public log and checked in your browser." },
+  { id: "vault", label: "Vault", icon: IconVault, title: "Vault", sub: "Your tokens, each held by a one-time key that only this browser knows." },
+  { id: "verify", label: "Verify", icon: IconVerify, title: "Verify a holder", sub: "Confirm who holds a token without learning who they are." },
+  { id: "operator", label: "Operator", icon: IconOperator, title: "Operator", sub: "Seal signed transfers into records and anchor them on Zcash." },
 ];
 
 const explorer = (txid: string) => `https://blockchair.com/zcash/transaction/${txid}`;
@@ -52,40 +54,105 @@ export function App() {
   const go = (t: Tab) => {
     setTab(t);
     history.replaceState(null, "", `#${t}`);
+    window.scrollTo({ top: 0 });
   };
 
+  const current = TABS.find((t) => t.id === tab)!;
+
   return (
-    <div className="shell">
-      <header className="top">
-        <h1>Seisin</h1>
-        <p className="lede">Proof of who holds what in a Zcash asset registry, without learning who they are.</p>
-      </header>
-      <nav className="tabs" role="tablist" aria-label="Sections">
-        {TABS.map((t) => (
-          <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? "tab on" : "tab"} onClick={() => go(t.id)}>
-            {t.label}
-          </button>
-        ))}
-      </nav>
-      {view?.demoIssuance && (
-        <p className="demo" role="note">
-          <strong>Demo collection.</strong> Tokens in <code>{view.collection}</code> are handed out free to show the flow. Transfers, proofs and anchors are real.
-        </p>
-      )}
-      {error && <p className="alert">Could not reach the registry: {error}</p>}
-      {!view || !log ? (
-        !error && <p className="muted">Loading the registry…</p>
-      ) : (
-        <main role="tabpanel">
-          {tab === "registry" && <RegistryTab view={view} log={log} />}
-          {tab === "vault" && <VaultTab view={view} log={log} refresh={refresh} />}
-          {tab === "verify" && <VerifyTab view={view} log={log} />}
-          {tab === "operator" && <OperatorTab view={view} refresh={refresh} />}
-        </main>
-      )}
-      <footer className="foot">
-        <a href="https://github.com/nftkingiii/seisin">Source</a> · <a href="/SPEC.md">Protocol and privacy boundary</a>
-      </footer>
+    <div className="app">
+      <div className="ambient" aria-hidden />
+      <aside className="side">
+        <div className="brand">
+          <Mark />
+          <div>
+            <strong>Seisin</strong>
+            <span>Title registry for Zcash assets</span>
+          </div>
+        </div>
+        <nav className="nav" role="tablist" aria-label="Sections">
+          {TABS.map((t) => (
+            <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? "nav-item on" : "nav-item"} onClick={() => go(t.id)}>
+              <t.icon />
+              <span>{t.label}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="side-foot">
+          <a href="/SPEC.md">
+            <IconBook /> Protocol and privacy
+          </a>
+          <a href="https://github.com/nftkingiii/seisin">
+            <IconCode /> Source
+          </a>
+        </div>
+      </aside>
+
+      <div className="main">
+        <header className="bar">
+          <div className="crumbs">
+            <span>{view?.collection ?? "…"}</span>
+            <span aria-hidden>/</span>
+            <strong>{current.label}</strong>
+          </div>
+          {view && <AnchorChip view={view} />}
+        </header>
+        {view && <RecordStrip view={view} />}
+
+        <div className="page" key={tab}>
+          <h1 className="display">{current.title}</h1>
+          <p className="sub">{current.sub}</p>
+          {view?.demoIssuance && (
+            <p className="demo" role="note">
+              <strong>Demo collection.</strong> Tokens in <code>{view.collection}</code> are handed out free to show the flow. Transfers, proofs and anchors are real.
+            </p>
+          )}
+          {error && <p className="alert">Could not reach the registry: {error}</p>}
+          {!view || !log ? (
+            !error && <div className="skeleton" aria-label="Loading the registry" />
+          ) : (
+            <main role="tabpanel" className="rise">
+              {tab === "registry" && <RegistryTab view={view} log={log} />}
+              {tab === "vault" && <VaultTab view={view} log={log} refresh={refresh} />}
+              {tab === "verify" && <VerifyTab view={view} log={log} />}
+              {tab === "operator" && <OperatorTab view={view} refresh={refresh} />}
+            </main>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AnchorChip({ view }: { view: RegistryView }) {
+  return view.latestAnchored === null ? (
+    <span className="chip idle">Not anchored yet</span>
+  ) : (
+    <span className="chip gold">
+      <IconSeal /> Anchored at epoch {view.latestAnchored}
+    </span>
+  );
+}
+
+function RecordStrip({ view }: { view: RegistryView }) {
+  const head = view.epochs[view.epochs.length - 1];
+  const anchored = view.epochs.filter((e) => e.anchor).pop();
+  const items: [string, string, string?][] = [
+    ["Epoch", String(view.head)],
+    ["Supply", String(view.supply)],
+    ["Root", short(head.record.root, 6), head.record.root],
+    ["Record", short(head.hash, 6), head.hash],
+    ["Anchor height", anchored?.anchor ? String(anchored.anchor.height) : "none"],
+    ["Waiting", `${view.pending.length} change${view.pending.length === 1 ? "" : "s"}`],
+  ];
+  return (
+    <div className="strip" aria-label="Current record">
+      {items.map(([k, v, title]) => (
+        <div key={k}>
+          <span>{k}</span>
+          <strong title={title}>{v}</strong>
+        </div>
+      ))}
     </div>
   );
 }
@@ -96,14 +163,16 @@ function Copy({ text, label = "Copy" }: { text: string; label?: string }) {
   const [done, setDone] = useState(false);
   return (
     <button
-      className="ghost"
+      className="icon-btn"
+      aria-label={done ? "Copied" : label}
+      title={done ? "Copied" : label}
       onClick={() => {
         navigator.clipboard?.writeText(text);
         setDone(true);
         setTimeout(() => setDone(false), 1400);
       }}
     >
-      {done ? "Copied" : label}
+      {done ? <IconCheck /> : <IconCopy />}
     </button>
   );
 }
@@ -135,7 +204,7 @@ function StepList({ steps }: { steps: Step[] }) {
       {steps.map((s) => (
         <li key={s.label} className={s.ok ? "ok" : "bad"}>
           <span className="mark" aria-hidden>
-            {s.ok ? "✓" : "✕"}
+            {s.ok ? <IconCheck /> : <IconCross />}
           </span>
           <div>
             <strong>{s.label}</strong>
@@ -157,24 +226,10 @@ function RegistryTab({ view, log }: { view: RegistryView; log: Log }) {
 
   return (
     <>
-      <div className="stats">
-        <div>
-          <span>Collection</span>
-          <strong>{view.collection}</strong>
-        </div>
-        <div>
-          <span>Supply</span>
-          <strong>{view.supply}</strong>
-        </div>
-        <div>
-          <span>Latest record</span>
-          <strong>Epoch {view.head}</strong>
-        </div>
-        <div>
-          <span>Anchored on Zcash</span>
-          <strong>{view.latestAnchored === null ? "Not yet" : `Epoch ${view.latestAnchored}`}</strong>
-        </div>
-      </div>
+      <Section title="Record chain">
+        <p className="muted">Each record commits to the one before it, so anchoring the newest record on Zcash also anchors every earlier one.</p>
+        <Chain view={view} />
+      </Section>
 
       <Section
         title="Audit this registry"
@@ -261,6 +316,28 @@ function RegistryTab({ view, log }: { view: RegistryView; log: Log }) {
         </Section>
       )}
     </>
+  );
+}
+
+function Chain({ view }: { view: RegistryView }) {
+  const anchoredAt = view.latestAnchored;
+  return (
+    <ol className="chain" aria-label="Records, oldest first">
+      {view.epochs.map((e) => {
+        const state = e.anchor ? "anchored" : anchoredAt !== null && e.epoch < anchoredAt ? "covered" : "open";
+        const label = state === "anchored" ? `anchored at ${e.anchor!.height}` : state === "covered" ? "covered" : "not anchored";
+        return (
+          <li key={e.epoch} className={`epoch ${state}`} style={{ ["--i" as string]: e.epoch }}>
+            <span className="node" aria-hidden>
+              {state !== "open" && <IconSeal />}
+            </span>
+            <strong>{e.epoch}</strong>
+            <small>{e.epoch === 0 ? "genesis" : `${e.changes} change${e.changes === 1 ? "" : "s"}`}</small>
+            <small className="state">{label}</small>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
