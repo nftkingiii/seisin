@@ -19,7 +19,6 @@
   "dependencies": {
     "@noble/curves": "^2.4.0",
     "@noble/hashes": "^2.4.0",
-    "@phosphor-icons/react": "^2.1.10",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {
