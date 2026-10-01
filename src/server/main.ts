@@ -18,7 +18,7 @@ const zdp = { check, addressHasReceiver };
 
 const env = {
   port: Number(process.env.PORT ?? 8787),
-  data: process.env.DATA_PATH ?? join(root, "data/seisin.db"),
+  data: process.env.DATA_PATH ?? (process.env.RAILWAY_VOLUME_MOUNT_PATH ? join(process.env.RAILWAY_VOLUME_MOUNT_PATH, "seisin.db") : join(root, "data/seisin.db")),
   collection: process.env.COLLECTION ?? "deeds",
   supply: Number(process.env.SUPPLY ?? 32),
   operatorToken: process.env.OPERATOR_TOKEN ?? "",
@@ -30,6 +30,11 @@ const env = {
   demoVault: /^[0-9a-f]{64}$/.test(process.env.DEMO_VAULT_BACKUP ?? "") ? process.env.DEMO_VAULT_BACKUP! : "",
   commit: process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.COMMIT ?? "local",
 };
+
+// On a host with a mounted volume, the database must live on it, or every deploy silently starts a new registry.
+const mount = process.env.RAILWAY_VOLUME_MOUNT_PATH;
+if (mount && !resolve(env.data).startsWith(resolve(mount) + "/") && !resolve(env.data).startsWith(resolve(mount) + "\\"))
+  throw new Error(`DATA_PATH (${env.data}) is not on the mounted volume (${mount}); refusing to start a registry that a redeploy would erase`);
 
 // Catch a pasted transparent address or a spending key before anything is published.
 if (env.anchorAddress && !/^u1[0-9a-z]{100,}$/.test(env.anchorAddress))
