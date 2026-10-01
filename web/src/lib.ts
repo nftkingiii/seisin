@@ -31,6 +31,7 @@ export interface RegistryView {
   anchorAddress: string | null;
   anchorUivk: string | null;
   demoIssuance: boolean;
+  demoVault: string | null;
   head: number;
   latestAnchored: number | null;
   epochs: EpochView[];
@@ -127,6 +128,7 @@ export async function audit(view: RegistryView, log: Log): Promise<Step[]> {
 const SEED = "seisin.seed";
 const USED = "seisin.used"; // { "<col>:<tokenId>": highest n handed out }
 const BACKED = "seisin.backed";
+const DEMO = "seisin.demo";
 
 function read(k: string): string | null {
   try {
@@ -149,13 +151,28 @@ export const vault = {
   create(): Uint8Array {
     const s = crypto.getRandomValues(new Uint8Array(32));
     write(SEED, bytesToHex(s));
+    try {
+      localStorage.removeItem(DEMO);
+      localStorage.removeItem(BACKED);
+    } catch {}
     return s;
+  },
+  /** Whether this browser is using the deliberately public demo vault. */
+  isDemo(): boolean {
+    return read(DEMO) === "1";
+  },
+  useDemo(hex: string) {
+    this.restore(hex);
+    write(DEMO, "1");
   },
   restore(hex: string) {
     const h = hex.trim().toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(h)) throw new Error("a backup is 64 hex characters");
     write(SEED, h);
     write(BACKED, "1"); // restoring from a backup proves the holder has one
+    try {
+      localStorage.removeItem(DEMO);
+    } catch {}
   },
   backup(): string | null {
     return read(SEED);
@@ -165,6 +182,7 @@ export const vault = {
       localStorage.removeItem(SEED);
       localStorage.removeItem(USED);
       localStorage.removeItem(BACKED);
+      localStorage.removeItem(DEMO);
     } catch {}
   },
   /** Whether the holder has proved they wrote the backup down, by typing part of it back. */
@@ -193,7 +211,7 @@ export const vault = {
   keyFor(s: RegistryState, id: number) {
     const seed = this.seed();
     if (!seed) return null;
-    for (let n = 0; n <= Math.max(this.used(s.collection, id), 0) + 2; n++) {
+    for (let n = 0; n <= Math.max(this.used(s.collection, id), 0) + 8; n++) {
       const k = ownerKey(seed, s.collection, id, n);
       if (k.public === s.owners[id]) return k;
     }

@@ -76,7 +76,7 @@ export function App() {
   return (
     <div className="app">
       <div className="ambient" aria-hidden />
-      <aside className="side">
+      <aside className="side" aria-label="Seisin">
         <div className="brand">
           <Mark />
           <div>
@@ -86,7 +86,7 @@ export function App() {
         </div>
         <nav className="nav" role="tablist" aria-label="Sections">
           {TABS.map((t) => (
-            <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? "nav-item on" : "nav-item"} onClick={() => go(t.id)}>
+            <button key={t.id} role="tab" aria-selected={tab === t.id} aria-label={t.label} title={t.label} className={tab === t.id ? "nav-item on" : "nav-item"} onClick={() => go(t.id)}>
               <t.icon />
               <span>{t.label}</span>
             </button>
@@ -94,10 +94,12 @@ export function App() {
         </nav>
         <div className="side-foot">
           <a href="/SPEC.md">
-            <IconBook /> Protocol and privacy
+            <IconBook />
+            <span>Protocol and privacy</span>
           </a>
           <a href="https://github.com/nftkingiii/seisin">
-            <IconCode /> Source
+            <IconCode />
+            <span>Source</span>
           </a>
         </div>
       </aside>
@@ -394,6 +396,25 @@ function VaultTab({ view, log, refresh }: { view: RegistryView; log: Log; refres
             </button>
           </div>
         )}
+        {view.demoVault && !restoring && (
+          <div className="demo-vault">
+            <div>
+              <strong>Just looking?</strong>
+              <p>Open the public demo vault. It already holds a token in an anchored record, so you can prove it on the Verify tab straight away. Its backup is public, so it can prove but never transfer.</p>
+            </div>
+            <button
+              className="secondary"
+              onClick={() => {
+                vault.useDemo(view.demoVault!);
+                setSeeded(true);
+                setBacked(true);
+                toast(true, "Public demo vault opened.");
+              }}
+            >
+              Use the public demo vault
+            </button>
+          </div>
+        )}
       </Section>
     );
 
@@ -448,6 +469,11 @@ function VaultTab({ view, log, refresh }: { view: RegistryView; log: Log; refres
 
   return (
     <>
+      {vault.isDemo() && (
+        <p className="demo" role="note">
+          <strong>Public demo vault.</strong> Anyone can open this vault, so it can prove what it holds but cannot transfer. Remove it under Backup to make your own.
+        </p>
+      )}
       <Section title="Your tokens" aside={<span className="small">{held.length} held{waiting.length ? ` · ${waiting.length} arriving` : ""}</span>}>
         <ul className="deeds">
           {held.map((h) => (
@@ -646,9 +672,11 @@ function HeldToken({ id, view, log, refresh }: { id: number; view: RegistryView;
             <button className={mode === "prove" ? "ghost on" : "ghost"} aria-expanded={mode === "prove"} onClick={() => open("prove")}>
               Prove
             </button>
-            <button className={mode === "send" ? "ghost on" : "ghost"} aria-expanded={mode === "send"} onClick={() => open("send")}>
-              Transfer
-            </button>
+            {!vault.isDemo() && (
+              <button className={mode === "send" ? "ghost on" : "ghost"} aria-expanded={mode === "send"} onClick={() => open("send")}>
+                Transfer
+              </button>
+            )}
           </div>
         )}
       </div>

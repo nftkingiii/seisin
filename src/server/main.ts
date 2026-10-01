@@ -26,6 +26,8 @@ const env = {
   anchorUivk: process.env.ANCHOR_UIVK ?? "",
   anchorZats: Number(process.env.ANCHOR_ZATS ?? 10000),
   demoIssuance: process.env.DEMO_ISSUANCE !== "off",
+  // A deliberately public vault backup, so anyone can try a proof against an anchored record.
+  demoVault: /^[0-9a-f]{64}$/.test(process.env.DEMO_VAULT_BACKUP ?? "") ? process.env.DEMO_VAULT_BACKUP! : "",
   commit: process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.COMMIT ?? "local",
 };
 
@@ -57,6 +59,11 @@ if (!env.operatorToken && !process.env.RAILWAY_ENVIRONMENT) {
   env.operatorToken = readFileSync(f, "utf8").trim();
 }
 const issuerKey = (id: number) => ownerKey(issuer, env.collection, id, 0);
+
+// Keys of the public demo vault may prove, but never transfer: anyone can restore it.
+const demoKeys = new Set<string>();
+if (env.demoVault)
+  for (let id = 0; id < env.supply; id++) for (let n = 0; n < 16; n++) demoKeys.add(ownerKey(hexToBytes(env.demoVault), env.collection, id, n).public);
 
 const store = new Store(env.data);
 if (!store.initialized()) {
@@ -133,6 +140,7 @@ function registryView() {
     anchorAddress: env.anchorAddress || null,
     anchorUivk: env.anchorUivk || null,
     demoIssuance: env.demoIssuance,
+    demoVault: env.demoVault || null,
     head: rows[rows.length - 1].record.epoch,
     latestAnchored: anchored ? anchored.record.epoch : null,
     epochs: rows.map((r) => ({
@@ -192,6 +200,7 @@ async function api(req: IncomingMessage, res: ServerResponse, path: string) {
   if (m === "POST" && path === "/api/transfers") {
     const { change } = await body(req);
     if (!isChange(change)) throw new HttpError(400, "malformed change");
+    if (demoKeys.has(change.from)) throw new HttpError(403, "the public demo vault can prove what it holds but cannot transfer it");
     store.submit(change, "transfer");
     return send(res, 202, { queued: true, registry: registryView() });
   }

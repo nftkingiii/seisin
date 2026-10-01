@@ -10,6 +10,7 @@ import { ownerKey, signTransfer, proveOwnership, verifyOwnership, replay, record
 const PORT = 18000 + Math.floor(Math.random() * 1000);
 const base = `http://127.0.0.1:${PORT}`;
 const TOKEN = randomBytes(16).toString("hex");
+const DEMO = randomBytes(32);
 const dir = mkdtempSync(join(tmpdir(), "seisin-"));
 let proc: ChildProcess;
 
@@ -23,7 +24,7 @@ const post = (p: string, b: unknown, auth = false) =>
 
 before(async () => {
   proc = spawn(process.execPath, ["--import", "tsx", "src/server/main.ts"], {
-    env: { ...process.env, PORT: String(PORT), DATA_PATH: join(dir, "t.db"), SUPPLY: "8", OPERATOR_TOKEN: TOKEN, ANCHOR_ADDRESS: "", ANCHOR_UIVK: "" },
+    env: { ...process.env, PORT: String(PORT), DATA_PATH: join(dir, "t.db"), SUPPLY: "8", OPERATOR_TOKEN: TOKEN, ANCHOR_ADDRESS: "", ANCHOR_UIVK: "", DEMO_VAULT_BACKUP: DEMO.toString("hex") },
     stdio: "ignore",
   });
   for (let i = 0; i < 100; i++) {
@@ -85,4 +86,17 @@ test("issue, seal, resell, prove, and replay the public log", async () => {
 
   // anchoring refuses without a configured anchor account
   assert.equal((await post("/api/operator/anchor", { epoch: 2, txid: "00".repeat(32) }, true)).status, 409);
+});
+
+test("the public demo vault can hold and prove, but not transfer", async () => {
+  const col = (await get("/api/registry")).collection;
+  assert.equal((await get("/api/registry")).demoVault, DEMO.toString("hex"));
+  const d6 = ownerKey(DEMO, col, 6, 0);
+  assert.equal((await post("/api/issue", { tokenId: 6, to: d6.public })).status, 202);
+  await post("/api/operator/seal", {}, true);
+  const epoch = (await get("/api/registry")).head;
+  const out = signTransfer(col, epoch, { tokenId: 6, from: d6.public, to: ownerKey(randomBytes(32), col, 6, 0).public, ref: "00".repeat(32) }, d6.secret);
+  const r = await post("/api/transfers", { change: out });
+  assert.equal(r.status, 403);
+  assert.match(r.body.error, /demo vault/);
 });

@@ -354,3 +354,35 @@ input[aria-invalid="true"] { border-color: rgba(240, 138, 128, 0.5); }
   .nav-item { padding: 0 10px; }
   .nav-item svg { display: none; }
 }
+
+.demo-vault { display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: center; margin-top: 20px; padding: 16px 18px; border-radius: 12px; border: 1px dashed rgba(227, 185, 90, 0.28); background: var(--gold-soft); }
+.demo-vault strong { font-weight: 500; color: var(--gold); }
+.demo-vault p { margin: 4px 0 0; font-size: 13.5px; color: var(--ink-2); }
+@media (max-width: 640px) { .demo-vault { grid-template-columns: 1fr; } }
+
+/* ---------- collapsible sidebar (desktop) ----------
+ * A 76px icon rail at rest. Hovering it, or tabbing into it, opens it to full
+ * width over the page, without pushing the content; it closes when the pointer
+ * or focus leaves. Closing waits a moment so passing the edge does not flicker it.
+ */
+@media (min-width: 901px) {
+  :root { --rail: 76px; --side-open: 264px; }
+  .app { grid-template-columns: var(--rail) minmax(0, 1fr); }
+  .side {
+    position: fixed; top: 0; left: 0; z-index: 20; height: 100dvh; width: var(--rail); overflow: hidden;
+    padding: 28px 14px; background: rgba(12, 12, 15, 0.94); backdrop-filter: blur(18px) saturate(140%);
+    transition: width 260ms var(--ease) 180ms, box-shadow 260ms var(--ease) 180ms;
+  }
+  .side:hover, .side:has(:focus-visible) {
+    width: var(--side-open); transition-delay: 60ms;
+    box-shadow: 24px 0 60px -20px rgba(0, 0, 0, 0.8), inset -1px 0 0 var(--line-2);
+  }
+  .main { grid-column: 2; }
+  .brand { padding: 0 9px 24px; overflow: hidden; }
+  .brand svg { flex: none; }
+  .nav-item, .side-foot a { width: 100%; padding: 0 15px; gap: 14px; overflow: hidden; }
+  .nav-item svg, .side-foot svg { flex: none; }
+  .brand > div, .nav-item span, .side-foot span { opacity: 0; transform: translateX(-4px); transition: opacity 180ms var(--ease), transform 220ms var(--ease); white-space: nowrap; }
+  .side:hover .brand > div, .side:hover .nav-item span, .side:hover .side-foot span,
+  .side:has(:focus-visible) .brand > div, .side:has(:focus-visible) .nav-item span, .side:has(:focus-visible) .side-foot span { opacity: 1; transform: none; transition-delay: 90ms; }
+}

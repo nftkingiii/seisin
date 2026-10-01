@@ -27,6 +27,12 @@ The full protocol and the privacy boundary (what anyone, the operator and a veri
 
 ## Try it
 
+**Fastest path (about a minute):** open **Vault** and choose **Use the public demo vault**. It already holds token No. 0 in an anchored record (epoch 1). Then, in a second browser tab, open **Verify**, create a challenge, answer it with **Prove** in the Vault tab, and paste the proof back. You should see "Holder of No. 0 confirmed".
+
+> **Public demo key.** The demo vault's backup is published on purpose: `0d796d0bf9e20562bda2e554cc74fbb19bc5703c54f14e4822d0003e9af944b7`. It holds nothing of value, and the server refuses any transfer signed by its keys, so it can prove but never move its token. Never use it as a real vault.
+
+**Full path:**
+
 1. **Registry:** run the audit. It rebuilds every record from the public log, checks every signature, and reads the latest anchor note from mainnet.
 2. **Vault:** create a vault (a secret kept in your browser) and confirm its backup. Claim a demo token; it becomes yours when the operator seals the next record.
 3. **Verify:** in another browser or profile, create a challenge. In the Vault, answer it with **Prove**, then paste the proof back. A proof only passes against an anchored record.
