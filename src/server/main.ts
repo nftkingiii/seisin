@@ -24,7 +24,10 @@ const env = {
   operatorToken: process.env.OPERATOR_TOKEN ?? "",
   anchorAddress: process.env.ANCHOR_ADDRESS ?? "",
   anchorUivk: process.env.ANCHOR_UIVK ?? "",
-  anchorZats: Number(process.env.ANCHOR_ZATS ?? 10000),
+  // The lock note only carries the memo; its value can be tiny.
+  anchorZats: Number(process.env.ANCHOR_ZATS ?? 1000),
+  // The locker service, if one runs beside this registry.
+  lockerUrl: (process.env.LOCKER_URL ?? "").replace(/\/$/, ""),
   demoIssuance: process.env.DEMO_ISSUANCE !== "off",
   // Signed changes are sealed into a new record on this cadence; 0 leaves sealing to the operator.
   autoSealMinutes: Number(process.env.AUTO_SEAL_MINUTES ?? 5),
@@ -169,6 +172,7 @@ function registryView() {
     demoIssuance: env.demoIssuance,
     demoVault: env.demoVault || null,
     autoSealMinutes: env.autoSealMinutes,
+    autoLock: !!env.lockerUrl,
     nextSealAt: nextSealAt ? new Date(nextSealAt).toISOString() : null,
     head: rows[rows.length - 1].record.epoch,
     latestAnchored: anchored ? anchored.record.epoch : null,
@@ -217,6 +221,17 @@ async function api(req: IncomingMessage, res: ServerResponse, path: string) {
   const m = req.method ?? "GET";
 
   if (m === "GET" && path === "/api/registry") return send(res, 200, registryView());
+
+  // The locker's status, for the Operator tab. Public on purpose: it holds an address and counts, no secrets.
+  if (m === "GET" && path === "/api/locker") {
+    if (!env.lockerUrl) return send(res, 200, { available: false });
+    try {
+      const r = await fetch(env.lockerUrl + "/status", { signal: AbortSignal.timeout(3000) });
+      return send(res, 200, { available: true, ...(await r.json()) });
+    } catch {
+      return send(res, 200, { available: true, reachable: false });
+    }
+  }
 
   if (m === "GET" && path === "/api/log")
     return send(res, 200, { collection: store.collection(), genesis: store.genesisOwners(), batches: store.epochs().slice(1).map((r) => r.changes) });

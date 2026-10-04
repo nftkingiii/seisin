@@ -1301,6 +1301,7 @@ function OperatorTab({ view, refresh }: { view: RegistryView; refresh: () => Pro
           </>
         )}
       </Section>
+      {view.autoLock && <LockerPanel />}
       {needsLock && <LockPanel view={view} record={head.epoch} token={token} busy={busy} act={act} />}
       <ClaimsPanel view={view} token={token} />
     </>
@@ -1424,6 +1425,78 @@ function ClaimsPanel({ view, token }: { view: RegistryView; token: string }) {
           <p className="small">Records publish {view.autoSealMinutes > 0 ? `every ${view.autoSealMinutes} minutes` : "when you press Publish now"}, so a claimed token shows up in the holder's vault soon after they open their link.</p>
         </div>
       )}
+    </Section>
+  );
+}
+
+type LockerStatus = {
+  available: boolean;
+  reachable?: boolean;
+  ok?: boolean;
+  address?: string | null;
+  spendableZats?: number | null;
+  lastCheck?: string | null;
+  nextCheck?: string | null;
+  lastLock?: { epoch: number; txid: string; height?: number; at: string } | null;
+  inflight?: { epoch: number; txid: string; at: string } | null;
+  error?: string | null;
+  locksToday?: number;
+  limits?: { checkMinutes: number; minHoursBetween: number; maxPerDay: number; minBalanceZats: number };
+  dryRun?: boolean;
+};
+
+const ago = (iso?: string | null) => {
+  if (!iso) return "never";
+  const m = Math.round((Date.now() - Date.parse(iso)) / 60_000);
+  return m < 1 ? "just now" : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`;
+};
+
+/** The automatic locker: what it will do next, and anything that needs the operator. */
+function LockerPanel() {
+  const [s, setS] = useState<LockerStatus | null>(null);
+  useEffect(() => {
+    const load = () => fetch("/api/locker").then((r) => r.json()).then(setS, () => setS({ available: true, reachable: false }));
+    load();
+    const t = setInterval(load, 20_000);
+    return () => clearInterval(t);
+  }, []);
+  if (!s) return null;
+  const zec = (z?: number | null) => (z == null ? "unknown" : `${(z / 1e8).toFixed(5)} ZEC`);
+  const state = s.reachable === false ? "Unreachable" : s.dryRun ? "Dry run (pays nothing)" : s.inflight ? "Waiting for a lock to be mined" : s.error ? "Needs attention" : "On";
+  return (
+    <Section title="Automatic locking" aside={<span className={s.error || s.reachable === false ? "pill wait" : "chip gold"}>{state}</span>}>
+      <p className="muted">
+        A small wallet beside the registry locks the newest record on Zcash when it has changes
+        {s.limits ? `, at most every ${s.limits.minHoursBetween} hours and ${s.limits.maxPerDay} times a day` : ""}. Every lock is still checked in the browser against mainnet, like a lock paid by hand.
+      </p>
+      {s.error && <p className="alert">{s.error}</p>}
+      <dl className="kv">
+        <dt>Last lock</dt>
+        <dd>{s.lastLock ? <a href={explorer(s.lastLock.txid)} target="_blank" rel="noreferrer">record {s.lastLock.epoch}, {ago(s.lastLock.at)}</a> : "none yet"}</dd>
+        {s.inflight && (
+          <>
+            <dt>Being mined</dt>
+            <dd>
+              <a href={explorer(s.inflight.txid)} target="_blank" rel="noreferrer">record {s.inflight.epoch}, sent {ago(s.inflight.at)}</a>
+            </dd>
+          </>
+        )}
+        <dt>Balance</dt>
+        <dd>
+          {zec(s.spendableZats)}
+          {s.limits && s.spendableZats != null && s.spendableZats < s.limits.minBalanceZats * 2 ? " · low, top up soon" : ""}
+        </dd>
+        <dt>Last check</dt>
+        <dd>{ago(s.lastCheck)}</dd>
+        {s.address && (
+          <>
+            <dt>Top-up address</dt>
+            <dd>
+              <Code>{s.address}</Code>
+            </dd>
+          </>
+        )}
+      </dl>
     </Section>
   );
 }

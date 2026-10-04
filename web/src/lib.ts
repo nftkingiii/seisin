@@ -34,6 +34,7 @@ export interface RegistryView {
   demoIssuance: boolean;
   demoVault: string | null;
   autoSealMinutes: number;
+  autoLock: boolean;
   nextSealAt: string | null;
   head: number;
   latestAnchored: number | null;
