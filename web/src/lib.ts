@@ -12,6 +12,7 @@ import {
 } from "../../src/core/registry.js";
 import { checkAnchor, blockchair } from "../../src/core/anchor.js";
 import { bytesToHex, hexToBytes } from "../../src/core/bytes.js";
+import type { OwnershipProof } from "../../src/core/registry.js";
 
 // ---- operator API ----
 
@@ -32,6 +33,8 @@ export interface RegistryView {
   anchorUivk: string | null;
   demoIssuance: boolean;
   demoVault: string | null;
+  autoSealMinutes: number;
+  nextSealAt: string | null;
   head: number;
   latestAnchored: number | null;
   epochs: EpochView[];
@@ -77,7 +80,7 @@ const zdp = () => (ready ??= init({ module_or_path: wasmUrl })).then(() => ({ ch
 export async function checkAnchorInBrowser(view: RegistryView, e: EpochView) {
   if (!e.anchor || !view.anchorAddress) throw new Error("this epoch has no anchor");
   const a = await checkAnchor({ txid: e.anchor.txid, proof: e.anchor.proof }, view.anchorAddress, blockchair(), await zdp());
-  if (recordHash(a.record) !== e.hash) throw new Error("the anchored memo is a different record");
+  if (recordHash(a.record) !== e.hash) throw new Error("the memo on Zcash is a different record");
   return a;
 }
 
@@ -92,12 +95,12 @@ export async function audit(view: RegistryView, log: Log): Promise<Step[]> {
     recs = replay(log.collection, log.genesis, log.batches);
     const bad = view.epochs.filter((e, i) => !recs[i] || recordHash(recs[i]) !== e.hash);
     steps.push({
-      label: "History replays",
+      label: "History checks out",
       ok: bad.length === 0 && recs.length === view.epochs.length,
-      detail: bad.length ? `epoch ${bad.map((b) => b.epoch).join(", ")} does not match the log` : `${recs.length} record${recs.length === 1 ? "" : "s"} rebuilt from the public log, every signature checked`,
+      detail: bad.length ? `record ${bad.map((b) => b.epoch).join(", ")} does not match the log` : `${recs.length} record${recs.length === 1 ? "" : "s"} rebuilt from the public log, every signature checked`,
     });
   } catch (e) {
-    steps.push({ label: "History replays", ok: false, detail: (e as Error).message });
+    steps.push({ label: "History checks out", ok: false, detail: (e as Error).message });
     return steps;
   }
   const supplies = new Set(recs.map((r) => r.supply));
@@ -105,21 +108,21 @@ export async function audit(view: RegistryView, log: Log): Promise<Step[]> {
 
   const anchored = view.epochs.filter((e) => e.anchor).pop();
   if (!anchored) {
-    steps.push({ label: "Anchored on Zcash", ok: false, detail: "no record is anchored yet; everything above is the operator's word until one is" });
+    steps.push({ label: "Locked on Zcash", ok: false, detail: "no record is locked on Zcash yet; everything above is the operator's word until one is" });
     return steps;
   }
   try {
     const a = await checkAnchorInBrowser(view, anchored);
     steps.push({
-      label: "Anchored on Zcash",
+      label: "Locked on Zcash",
       ok: true,
-      detail: `epoch ${anchored.epoch} is in ${a.pool === "ironwood" || a.pool === "orchard" ? "an" : "a"} ${a.pool[0].toUpperCase() + a.pool.slice(1)} note mined at height ${a.height}, checked here with no key${anchored.epoch > 0 ? "; it commits to every earlier record" : ""}`,
+      detail: `record ${anchored.epoch} is in ${a.pool === "ironwood" || a.pool === "orchard" ? "an" : "a"} ${a.pool[0].toUpperCase() + a.pool.slice(1)} note mined at height ${a.height}, checked here with no key${anchored.epoch > 0 ? "; it commits to every earlier record" : ""}`,
     });
   } catch (e) {
-    steps.push({ label: "Anchored on Zcash", ok: false, detail: (e as Error).message });
+    steps.push({ label: "Locked on Zcash", ok: false, detail: (e as Error).message });
   }
   if (anchored.epoch < view.head)
-    steps.push({ label: "Newer records", ok: true, detail: `epochs ${anchored.epoch + 1}–${view.head} are sealed but not anchored yet` });
+    steps.push({ label: "Newer records", ok: true, detail: `records ${anchored.epoch + 1}–${view.head} are published but not locked on Zcash yet` });
   return steps;
 }
 
@@ -227,3 +230,59 @@ export function randomHex32(): string {
 }
 
 export const short = (h: string, n = 8) => (h.length > n * 2 ? `${h.slice(0, n)}…${h.slice(-4)}` : h);
+
+export { encodeProof, decodeProof } from "../../src/core/proofcode.js";
+import { encodeProof } from "../../src/core/proofcode.js";
+
+// ---- links: one tap instead of copy and paste ----
+
+const here = () => `${location.origin}${location.pathname}`;
+export const links = {
+  challenge: (col: string, nonce: string) => `${here()}#prove=${col}.${nonce}`,
+  proof: (p: OwnershipProof) => `${here()}#check=${encodeProof(p)}`,
+  receive: (col: string, id: number, key: string) => `${here()}#send=${col}.${id}.${key}`,
+};
+
+export type Intent =
+  | { kind: "prove"; collection: string; nonce: string }
+  | { kind: "check"; proof: string }
+  | { kind: "send"; collection: string; tokenId: number; to: string }
+  | { kind: "claim"; collection: string; tokenId: number; code: string };
+
+/** Turns a pasted link, code or URL hash into the action it asks for. */
+export function parseIntent(raw: string): Intent | null {
+  const h = raw.trim().replace(/^.*#/, "");
+  let m = h.match(/^prove=([a-z0-9-]+)\.([0-9a-f]{64})$/) ?? raw.trim().match(/^seisin-chal:([a-z0-9-]+):([0-9a-f]{64})$/);
+  if (m) return { kind: "prove", collection: m[1], nonce: m[2] };
+  m = h.match(/^check=(.+)$/);
+  if (m) return { kind: "check", proof: m[1] };
+  m = h.match(/^send=([a-z0-9-]+)\.(\d+)\.([0-9a-f]{64})$/) ?? raw.trim().match(/^seisin-recv:([a-z0-9-]+):(\d+):([0-9a-f]{64})$/);
+  if (m) return { kind: "send", collection: m[1], tokenId: Number(m[2]), to: m[3] };
+  m = h.match(/^claim=([a-z0-9-]+)\.(\d+)\.([0-9a-f]{20})$/);
+  if (m) return { kind: "claim", collection: m[1], tokenId: Number(m[2]), code: m[3] };
+  return null;
+}
+
+// ---- challenges this browser created (a proof link opened later is checked against them) ----
+
+const CHALLENGES = "seisin.challenges";
+const DAY = 86_400_000;
+export const challenges = {
+  add(nonce: string) {
+    const all = JSON.parse(read(CHALLENGES) ?? "{}") as Record<string, number>;
+    all[nonce] = Date.now();
+    for (const [k, t] of Object.entries(all)) if (Date.now() - t > DAY) delete all[k];
+    write(CHALLENGES, JSON.stringify(all));
+  },
+  has(nonce: string): boolean {
+    const t = (JSON.parse(read(CHALLENGES) ?? "{}") as Record<string, number>)[nonce];
+    return t !== undefined && Date.now() - t <= DAY;
+  },
+};
+
+/** "in about 3 minutes" for the next automatic seal. */
+export function sealEta(view: RegistryView): string {
+  if (!view.nextSealAt) return "when the operator publishes the next record";
+  const min = Math.max(1, Math.round((new Date(view.nextSealAt).getTime() - Date.now()) / 60_000));
+  return `in the next record, in about ${min} minute${min === 1 ? "" : "s"}`;
+}

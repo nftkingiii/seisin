@@ -9,7 +9,7 @@ Seisin makes that index checkable by anyone, while keeping holders private:
 - **Fixed supply.** Every record commits to exactly `supply` tokens; changes only replace owners.
 - **Owner consent.** A token moves only with a signature from its current one-time owner key. The operator cannot move it alone.
 - **Checkable history.** Each record commits to the previous record and to the signed changes that produced it. Anyone can replay the public log and reproduce every record.
-- **Anchored on Zcash.** Each record is written into the memo of a shielded Zcash mainnet note sent to the registry's anchor address. Your browser checks that note against the raw transaction with no viewing key.
+- **Locked on Zcash.** Each record is written into the memo of a shielded Zcash mainnet note sent to the registry's lock (anchor) address. Your browser checks that note against the raw transaction with no viewing key.
 - **Private proof of holding.** A holder proves they hold a token by answering a verifier's one-time challenge. No Zcash address or other token is revealed.
 
 The full protocol and the privacy boundary (what anyone, the operator and a verifier can and cannot see, plus the known leaks) are in [SPEC.md](SPEC.md).
@@ -23,20 +23,35 @@ The full protocol and the privacy boundary (what anyone, the operator and a veri
 | Transfers, proofs, audit | **Real.** Ed25519 signatures, a Merkle tree and a hash-chained log, all checked in the browser. |
 | The `deeds` collection | **Demo.** Tokens are handed out free ("demo issuance") so anyone can try the flow. A real collection would sell each token's first transfer for ZEC. |
 | Payment ↔ transfer binding | **Not enforced in v1.** A transfer carries a `ref` field for a hash of the payment's delivery proof, but a change is valid without one. |
-| Anchoring | **Manual in v1.** The operator pays each anchor note from a Zcash wallet (the Operator tab shows the payment request as a QR code). |
+| Publishing records | **Automatic.** Signed changes are published as a new record every 5 minutes. |
+| Locking on Zcash | **Manual in v1.** The operator pays each lock note from a Zcash wallet; the Operator tab shows the payment request as a QR code. A proof passes only against a locked record. |
+| Claim codes | **Real, not yet used on mainnet.** The flow is built and tested; no claim payment has been sent yet. |
 
 ## Try it
 
-**Fastest path (about a minute):** open **Vault** and choose **Use the public demo vault**. It already holds token No. 0 in an anchored record (epoch 1). Then, in a second browser tab, open **Verify**, create a challenge, answer it with **Prove** in the Vault tab, and paste the proof back. You should see "Holder of No. 0 confirmed".
+**One click:** open **Verify** and press **See it work**. It creates a challenge, answers it with the public demo vault, and checks the answer against the record locked on Zcash.
+
+**Two people, links only:**
+
+1. The verifier opens **Verify**, creates a challenge and sends the **challenge link**.
+2. The holder opens it. Their vault opens with the request ready; one tap on **Prove No. X** makes a **proof link**.
+3. The verifier opens the proof link. Verify checks it and shows "Holder of No. X confirmed". A proof link only passes in the browser that created the challenge, so a forwarded proof cannot be replayed.
+
+No vault yet? In **Vault**, choose **Use the public demo vault**. It holds token No. 0 in a locked record.
 
 > **Public demo key.** The demo vault's backup is published on purpose: `0d796d0bf9e20562bda2e554cc74fbb19bc5703c54f14e4822d0003e9af944b7`. It holds nothing of value, and the server refuses any transfer signed by its keys, so it can prove but never move its token. Never use it as a real vault.
 
-**Full path:**
+**Transfers:** the receiver makes a **receive link** in their vault. The holder opens it, reviews the transfer, and holds the button to sign it over. It takes effect in the next published record.
 
-1. **Registry:** run the audit. It rebuilds every record from the public log, checks every signature, and reads the latest anchor note from mainnet.
-2. **Vault:** create a vault (a secret kept in your browser) and confirm its backup. Claim a demo token; it becomes yours when the operator seals the next record.
-3. **Verify:** in another browser or profile, create a challenge. In the Vault, answer it with **Prove**, then paste the proof back. A proof only passes against an anchored record.
-4. **Transfer:** the receiver makes a one-time receive code; the holder reviews it and holds to sign the transfer over.
+## Bringing existing holders in
+
+This is how a marketplace like Zilkroad would move its current index onto Seisin without exposing anyone:
+
+1. In **Operator** (sidebar → Operator sign-in), paste the ownership list: one `token, shielded address` per line.
+2. Seisin makes a one-time claim code per token and one Zcash payment request with an output to every holder. Each output's encrypted memo carries that holder's claim link. Pay it from the marketplace's wallet.
+3. Each holder opens the link from their wallet's memo, sets up a vault, and taps **Claim**. The token moves to a fresh key in their vault.
+
+Seisin stores only a hash of each code and never the address. The public log shows that a token was claimed, but not who claimed it.
 
 ## Run it
 

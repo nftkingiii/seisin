@@ -44,11 +44,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 export function HoldButton({ label, doneLabel, ms = 1200, disabled, onCommit }: { label: string; doneLabel: string; ms?: number; disabled?: boolean; onCommit: () => void }) {
   const [p, setP] = useState(0);
   const start = useRef<number | null>(null);
-  const raf = useRef(0);
+  const timer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const fired = useRef(false);
 
+  // A plain timer rather than animation frames, so the hold completes even where the browser throttles frames.
   const stop = useCallback(() => {
-    cancelAnimationFrame(raf.current);
+    clearInterval(timer.current);
     start.current = null;
     if (!fired.current) setP(0);
   }, []);
@@ -58,21 +59,21 @@ export function HoldButton({ label, doneLabel, ms = 1200, disabled, onCommit }: 
     const v = Math.min(1, (performance.now() - start.current) / ms);
     setP(v);
     if (v >= 1) {
+      clearInterval(timer.current);
       fired.current = true;
       start.current = null;
       onCommit();
-      return;
     }
-    raf.current = requestAnimationFrame(tick);
   }, [ms, onCommit]);
 
   const begin = () => {
     if (disabled || fired.current || start.current !== null) return;
     start.current = performance.now();
-    raf.current = requestAnimationFrame(tick);
+    clearInterval(timer.current);
+    timer.current = setInterval(tick, 16);
   };
 
-  useEffect(() => () => cancelAnimationFrame(raf.current), []);
+  useEffect(() => () => clearInterval(timer.current), []);
 
   return (
     <button
