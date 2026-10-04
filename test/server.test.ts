@@ -24,7 +24,7 @@ const post = (p: string, b: unknown, auth = false) =>
 
 before(async () => {
   proc = spawn(process.execPath, ["--import", "tsx", "src/server/main.ts"], {
-    env: { ...process.env, PORT: String(PORT), DATA_PATH: join(dir, "t.db"), SUPPLY: "8", OPERATOR_TOKEN: TOKEN, ANCHOR_ADDRESS: "", ANCHOR_UIVK: "", DEMO_VAULT_BACKUP: DEMO.toString("hex") },
+    env: { ...process.env, PORT: String(PORT), DATA_PATH: join(dir, "t.db"), SUPPLY: "8", OPERATOR_TOKEN: TOKEN, ANCHOR_ADDRESS: "", ANCHOR_UIVK: "", DEMO_VAULT_BACKUP: DEMO.toString("hex"), AUTO_SEAL_MINUTES: "0" },
     stdio: "ignore",
   });
   for (let i = 0; i < 100; i++) {

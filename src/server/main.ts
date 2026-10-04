@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync } from "node:fs";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes, timingSafeEqual, createHash } from "node:crypto";
 import { dirname, join, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { initSync, check, make, addressHasReceiver } from "../../vendor/zcash-delivery-proof/zcash_delivery_proof_wasm.js";
@@ -26,6 +26,10 @@ const env = {
   anchorUivk: process.env.ANCHOR_UIVK ?? "",
   anchorZats: Number(process.env.ANCHOR_ZATS ?? 10000),
   demoIssuance: process.env.DEMO_ISSUANCE !== "off",
+  // Signed changes are sealed into a new record on this cadence; 0 leaves sealing to the operator.
+  autoSealMinutes: Number(process.env.AUTO_SEAL_MINUTES ?? 5),
+  // Used to build claim links; falls back to the request's own host.
+  publicUrl: (process.env.PUBLIC_URL ?? "").replace(/\/$/, ""),
   // A deliberately public vault backup, so anyone can try a proof against an anchored record.
   demoVault: /^[0-9a-f]{64}$/.test(process.env.DEMO_VAULT_BACKUP ?? "") ? process.env.DEMO_VAULT_BACKUP! : "",
   commit: process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.COMMIT ?? "local",
@@ -74,6 +78,24 @@ const store = new Store(env.data);
 if (!store.initialized()) {
   store.init(env.collection, Array.from({ length: env.supply }, (_, i) => issuerKey(i).public));
   console.log(`created registry "${env.collection}" with supply ${env.supply}`);
+}
+
+// ---- automatic sealing ----
+
+let nextSealAt: number | null = null;
+if (env.autoSealMinutes > 0) {
+  const every = env.autoSealMinutes * 60_000;
+  nextSealAt = Date.now() + every;
+  setInterval(() => {
+    nextSealAt = Date.now() + every;
+    if (store.pending().length === 0) return;
+    try {
+      const row = store.seal();
+      console.log(`sealed epoch ${row.record.epoch} automatically (${row.changes.length} change${row.changes.length === 1 ? "" : "s"})`);
+    } catch (e) {
+      console.error("automatic seal failed:", (e as Error).message);
+    }
+  }, every).unref();
 }
 
 // ---- helpers ----
@@ -146,6 +168,8 @@ function registryView() {
     anchorUivk: env.anchorUivk || null,
     demoIssuance: env.demoIssuance,
     demoVault: env.demoVault || null,
+    autoSealMinutes: env.autoSealMinutes,
+    nextSealAt: nextSealAt ? new Date(nextSealAt).toISOString() : null,
     head: rows[rows.length - 1].record.epoch,
     latestAnchored: anchored ? anchored.record.epoch : null,
     epochs: rows.map((r) => ({
@@ -222,6 +246,22 @@ async function api(req: IncomingMessage, res: ServerResponse, path: string) {
     return send(res, 202, { queued: true, registry: registryView() });
   }
 
+  if (m === "POST" && path === "/api/claim") {
+    const { tokenId, code, to } = await body(req);
+    if (!Number.isInteger(tokenId) || typeof code !== "string" || !/^[0-9a-f]{20}$/.test(code) || typeof to !== "string" || !/^[0-9a-f]{64}$/.test(to))
+      throw new HttpError(400, "a claim needs the token, its code and a fresh key");
+    const c = store.claim(tokenId);
+    const given = Buffer.from(createHash("sha256").update(code).digest("hex"));
+    if (!c || !timingSafeEqual(given, Buffer.from(c.codeHash))) throw new HttpError(403, "that claim code is not valid for this token");
+    if (c.usedAt) throw new HttpError(409, "this claim code has already been used");
+    const s = store.state();
+    const k = issuerKey(tokenId);
+    if (s.owners[tokenId] !== k.public) throw new HttpError(409, "token is no longer held by the issuer");
+    store.submit(signTransfer(s.collection, s.epoch, { tokenId, from: k.public, to, ref: "00".repeat(32) }, k.secret), "claimed with a code");
+    store.useClaim(tokenId);
+    return send(res, 202, { queued: true, registry: registryView() });
+  }
+
   const req_ = path.match(/^\/api\/anchor-request\/(\d+)$/);
   if (m === "GET" && req_) return send(res, 200, anchorRequest(Number(req_[1])));
 
@@ -235,6 +275,43 @@ async function api(req: IncomingMessage, res: ServerResponse, path: string) {
     requireOperator(req);
     const { epoch, txid } = await body(req);
     return send(res, 200, await recordAnchor(epoch, txid));
+  }
+
+  /*
+   * Moving existing holders onto Seisin. The operator uploads token -> shielded
+   * address; each token gets a one-time claim code, delivered privately in the
+   * encrypted memo of a small payment to that address. Only a hash of the code
+   * is stored, and the address is never stored at all.
+   */
+  if (m === "POST" && path === "/api/operator/claims") {
+    requireOperator(req);
+    const { rows, amountZats } = await body(req);
+    if (!Array.isArray(rows) || rows.length === 0 || rows.length > 50) throw new HttpError(400, "send 1 to 50 rows of { tokenId, address }");
+    const s = store.state();
+    const queued = new Set(store.pending().map((p) => p.change.tokenId));
+    const seen = new Set<number>();
+    for (const r of rows) {
+      if (!Number.isInteger(r?.tokenId) || r.tokenId < 0 || r.tokenId >= s.owners.length) throw new HttpError(400, `no such token: ${r?.tokenId}`);
+      if (seen.has(r.tokenId)) throw new HttpError(400, `token ${r.tokenId} appears twice`);
+      seen.add(r.tokenId);
+      if (typeof r.address !== "string" || !/^u1[0-9a-z]{100,}$/.test(r.address)) throw new HttpError(400, `token ${r.tokenId}: the address must be a shielded unified address (u1…)`);
+      if (s.owners[r.tokenId] !== issuerKey(r.tokenId).public || queued.has(r.tokenId)) throw new HttpError(409, `token ${r.tokenId} is no longer held by the issuer`);
+    }
+    const base = env.publicUrl || `${req.headers["x-forwarded-proto"] ?? "http"}://${req.headers.host}`;
+    const zats = Number.isInteger(amountZats) && amountZats >= 1000 ? amountZats : 10000;
+    const amount = (zats / 1e8).toFixed(8).replace(/0+$/, "");
+    const claims = rows.map((r: { tokenId: number; address: string }) => {
+      const code = randomBytes(10).toString("hex");
+      store.setClaim(r.tokenId, createHash("sha256").update(code).digest("hex"));
+      const link = `${base}/#claim=${s.collection}.${r.tokenId}.${code}`;
+      const memo = `Seisin: you hold ${s.collection} No. ${r.tokenId}. Claim it into your own private vault: ${link}`;
+      return { tokenId: r.tokenId, address: r.address, link, memo };
+    });
+    const params = claims.flatMap((c: { address: string; memo: string }, i: number) => {
+      const k = i === 0 ? "" : `.${i}`;
+      return [`address${k}=${c.address}`, `amount${k}=${amount}`, `memo${k}=${b64url(c.memo)}`];
+    });
+    return send(res, 200, { claims, amount, uri: `zcash:?${params.join("&")}` });
   }
 
   /*

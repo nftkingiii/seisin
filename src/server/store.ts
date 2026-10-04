@@ -39,6 +39,7 @@ export class Store {
       create table if not exists meta (k text primary key, v text not null);
       create table if not exists epochs (n integer primary key, record text not null, changes text not null, anchor text, sealed_at text not null);
       create table if not exists pending (id integer primary key autoincrement, change text not null, note text not null, at text not null);
+      create table if not exists claims (token_id integer primary key, code_hash text not null, created_at text not null, used_at text);
     `);
   }
 
@@ -112,6 +113,27 @@ export class Store {
     this.db.prepare("delete from pending").run();
     this.db.exec("commit");
     return this.epochs()[next.epoch];
+  }
+
+  /*
+   * Claim codes move an existing holder onto Seisin. Only a hash of each code
+   * is kept; the holder's Zcash address is never stored here.
+   */
+  setClaim(tokenId: number, codeHash: string) {
+    this.db.prepare("insert or replace into claims values (?, ?, ?, null)").run(tokenId, codeHash, new Date().toISOString());
+  }
+
+  claim(tokenId: number): { codeHash: string; usedAt: string | null } | undefined {
+    const r = this.db.prepare("select code_hash, used_at from claims where token_id = ?").get(tokenId) as { code_hash: string; used_at: string | null } | undefined;
+    return r && { codeHash: r.code_hash, usedAt: r.used_at };
+  }
+
+  useClaim(tokenId: number) {
+    this.db.prepare("update claims set used_at = ? where token_id = ?").run(new Date().toISOString(), tokenId);
+  }
+
+  openClaims(): number {
+    return (this.db.prepare("select count(*) n from claims where used_at is null").get() as { n: number }).n;
   }
 
   setAnchor(n: number, a: StoredAnchor) {
