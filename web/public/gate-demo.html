@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#09090b" />
+    <title>Holders' lounge · a Seisin gate demo</title>
+    <link rel="icon" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <style>
+      :root { --bg: #09090b; --panel: #141417; --line: rgba(255, 255, 255, 0.08); --ink: #f4f4f5; --ink-2: #a1a1aa; --gold: #e3b95a; --ok: #6fd3a0; --bad: #f08a80; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100dvh; background: radial-gradient(800px 420px at 10% -10%, rgba(120, 128, 170, 0.16), transparent 60%), var(--bg); color: var(--ink); font: 15px/1.6 Geist, ui-sans-serif, system-ui, sans-serif; display: grid; place-items: center; padding: 32px 16px; }
+      main { width: min(560px, 100%); }
+      .tag { display: inline-block; font-size: 12.5px; color: var(--gold); border: 1px dashed rgba(227, 185, 90, 0.35); background: rgba(227, 185, 90, 0.08); border-radius: 99px; padding: 4px 12px; margin-bottom: 18px; }
+      h1 { font-size: clamp(32px, 6vw, 44px); letter-spacing: -0.03em; line-height: 1.05; margin: 0 0 10px; }
+      p { color: var(--ink-2); margin: 0 0 18px; }
+      .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 22px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06); }
+      button { font: 500 15px Geist, sans-serif; min-height: 46px; padding: 0 20px; border-radius: 12px; border: 0; background: var(--ink); color: #0b0b0d; cursor: pointer; }
+      button:disabled { opacity: 0.6; cursor: progress; }
+      button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+      .result { margin-top: 18px; padding: 14px 16px; border-radius: 12px; display: none; }
+      .result.ok { display: block; background: rgba(111, 211, 160, 0.09); border: 1px solid rgba(111, 211, 160, 0.25); }
+      .result.bad { display: block; background: rgba(240, 138, 128, 0.09); border: 1px solid rgba(240, 138, 128, 0.25); }
+      .result strong { display: block; font-weight: 500; margin-bottom: 4px; }
+      .ok strong { color: var(--ok); }
+      .bad strong { color: var(--bad); }
+      .learned { margin: 10px 0 0; padding-left: 18px; color: var(--ink-2); font-size: 14px; }
+      code { font: 13px "Geist Mono", ui-monospace, monospace; color: var(--ink); }
+      footer { margin-top: 18px; font-size: 13px; color: var(--ink-2); }
+      a { color: var(--ink); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <span class="tag">Demo integration of the Seisin gate</span>
+      <h1>Holders' lounge</h1>
+      <p>Members-only. Prove you hold a <code>deeds</code> token to enter. We never learn your Zcash address, your other tokens, or who sold to you.</p>
+      <div class="card">
+        <button data-seisin-gate>Verify with Seisin</button>
+        <div id="result" class="result" role="status" aria-live="polite"></div>
+        <p style="margin: 16px 0 0; font-size: 13.5px">No token? In Seisin's Vault, choose <em>Use the public demo vault</em>. It holds token No. 0.</p>
+      </div>
+      <footer>This page uses <code>&lt;script src="/gate.js"&gt;</code> and one button, as any site would. <a href="/">Back to Seisin</a></footer>
+    </main>
+    <script src="/gate.js"></script>
+    <script>
+      const out = document.getElementById("result");
+      addEventListener("seisin:verified", (e) => {
+        const v = e.detail;
+        out.className = "result ok";
+        out.innerHTML = "";
+        const s = document.createElement("strong");
+        s.textContent = `Welcome in, holder of ${v.collection} No. ${v.tokenId}.`;
+        const ul = document.createElement("ul");
+        ul.className = "learned";
+        for (const line of [
+          `This site learned: you hold No. ${v.tokenId}, in record ${v.record}${v.locked ? `, locked on Zcash at height ${v.lockedAtHeight}` : ""}.`,
+          "It did not learn: your Zcash address, your other tokens, or your purchase.",
+        ]) {
+          const li = document.createElement("li");
+          li.textContent = line;
+          ul.append(li);
+        }
+        out.append(s, ul);
+      });
+      addEventListener("seisin:failed", (e) => {
+        out.className = "result bad";
+        out.innerHTML = "";
+        const s = document.createElement("strong");
+        s.textContent = "Not admitted";
+        const p = document.createElement("p");
+        p.style.margin = "0";
+        p.textContent = e.detail.reason;
+        out.append(s, p);
+      });
+    </script>
+  </body>
+</html>

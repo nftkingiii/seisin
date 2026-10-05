@@ -13,6 +13,7 @@ import {
   links,
   parseIntent,
   decodeProof,
+  encodeProof,
   challenges,
   sealEta,
   type Intent,
@@ -196,7 +197,7 @@ export function App() {
             !error && <div className="skeleton" aria-label="Loading the registry" />
           ) : (
             <main role="tabpanel" className="rise">
-              {tab === "registry" && <RegistryTab view={view} log={log} />}
+              {tab === "registry" && <RegistryTab view={view} log={log} go={go} />}
               {tab === "vault" && <VaultTab view={view} log={log} refresh={refresh} intent={intent} done={done} />}
               {tab === "verify" && <VerifyTab view={view} log={log} intent={intent?.kind === "check" ? intent : null} done={done} />}
               {tab === "operator" && <OperatorTab view={view} refresh={refresh} />}
@@ -340,13 +341,19 @@ function StepList({ steps }: { steps: Step[] }) {
 
 // ---------- Registry ----------
 
-function RegistryTab({ view, log }: { view: RegistryView; log: Log }) {
+function RegistryTab({ view, log, go }: { view: RegistryView; log: Log; go: (t: Tab) => void }) {
   const [steps, setSteps] = useState<Step[] | null>(null);
   const [busy, setBusy] = useState(false);
   const epochs = [...view.epochs].reverse();
+  const runAudit = async () => {
+    setBusy(true);
+    setSteps(await audit(view, log));
+    setBusy(false);
+  };
 
   return (
     <>
+      <HowItWorks go={go} runAudit={runAudit} />
       <Section title="Record chain">
         <p className="muted">Each record commits to the one before it, so locking the newest record on Zcash also locks every earlier one.</p>
         <Chain view={view} />
@@ -358,11 +365,7 @@ function RegistryTab({ view, log }: { view: RegistryView; log: Log }) {
           <button
             className="primary"
             disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              setSteps(await audit(view, log));
-              setBusy(false);
-            }}
+            onClick={runAudit}
           >
             {busy ? "Checking…" : steps ? "Run again" : "Run the audit"}
           </button>
@@ -436,6 +439,72 @@ function RegistryTab({ view, log }: { view: RegistryView; log: Log }) {
         </Section>
       )}
     </>
+  );
+}
+
+const INTRO = "seisin.intro.hidden";
+
+/** Three steps for a first visit, each with one thing to try. Hidden once read. */
+function HowItWorks({ go, runAudit }: { go: (t: Tab) => void; runAudit: () => void }) {
+  const [hidden, setHidden] = useState(() => {
+    try {
+      return localStorage.getItem(INTRO) === "1";
+    } catch {
+      return false;
+    }
+  });
+  if (hidden)
+    return (
+      <p className="small intro-again">
+        <button
+          className="link"
+          onClick={() => {
+            try {
+              localStorage.removeItem(INTRO);
+            } catch {}
+            setHidden(false);
+          }}
+        >
+          How Seisin works
+        </button>
+      </p>
+    );
+  const steps = [
+    { n: "1", title: "Hold privately", body: "Your vault gives every token its own one-time key. Nobody can link your tokens to each other or to your Zcash wallet.", act: "Open a vault", run: () => go("vault") },
+    { n: "2", title: "Prove with a link", body: "A verifier sends a challenge link; you answer with a proof link. They learn you hold one token, nothing else.", act: "See it work", run: () => go("verify") },
+    { n: "3", title: "Anyone can audit", body: "Every record is rebuilt from the public log and locked on Zcash mainnet. Your browser checks it with no key.", act: "Run the audit", run: runAudit },
+  ];
+  return (
+    <section className="panel intro" aria-label="How Seisin works">
+      <div className="panel-head">
+        <h2>How Seisin works</h2>
+        <button
+          className="link"
+          onClick={() => {
+            try {
+              localStorage.setItem(INTRO, "1");
+            } catch {}
+            setHidden(true);
+          }}
+        >
+          Got it
+        </button>
+      </div>
+      <ol className="intro-steps">
+        {steps.map((s) => (
+          <li key={s.n}>
+            <span className="dot" aria-hidden>
+              {s.n}
+            </span>
+            <strong>{s.title}</strong>
+            <p>{s.body}</p>
+            <button className="ghost" onClick={s.run}>
+              {s.act}
+            </button>
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }
 
@@ -555,7 +624,7 @@ function VaultTab({ view, log, refresh, intent, done }: { view: RegistryView; lo
         </p>
       </IntentCard>
     ) : forVault.kind === "prove" ? (
-      <ProveRequest view={view} log={log} nonce={forVault.nonce} onDismiss={done} />
+      <ProveRequest view={view} log={log} nonce={forVault.nonce} returnUrl={forVault.returnUrl} onDismiss={done} />
     ) : forVault.kind === "claim" ? (
       <ClaimRequest view={view} intent={forVault} refresh={refresh} onDone={done} />
     ) : !held.some((h) => h.id === forVault.tokenId) ? (
@@ -670,12 +739,13 @@ function IntentCard({ title, children, onDismiss }: { title: string; children: R
   );
 }
 
-function ProveRequest({ view, log, nonce, onDismiss }: { view: RegistryView; log: Log; nonce: string; onDismiss: () => void }) {
-  const [proof, setProof] = useState<{ id: number; link: string } | null>(null);
+function ProveRequest({ view, log, nonce, returnUrl, onDismiss }: { view: RegistryView; log: Log; nonce: string; returnUrl?: string; onDismiss: () => void }) {
+  const [proof, setProof] = useState<{ id: number; link: string; code: string } | null>(null);
+  const site = returnUrl ? new URL(returnUrl).host : null;
   const { state, ids } = provable(view, log);
   const record = view.latestAnchored ?? view.head;
   return (
-    <IntentCard title="A verifier asked you to prove a token" onDismiss={onDismiss}>
+    <IntentCard title={site ? `${site} asks you to prove a token` : "A verifier asked you to prove a token"} onDismiss={onDismiss}>
       {ids.length === 0 ? (
         <p className="muted">This vault has no token in record {record}, the newest one locked on Zcash. A token you received later can be proved once a newer record is locked.</p>
       ) : (
@@ -688,14 +758,30 @@ function ProveRequest({ view, log, nonce, onDismiss }: { view: RegistryView; log
                 className={proof?.id === id ? "secondary" : "primary"}
                 onClick={() => {
                   const k = vault.keyFor(state, id)!;
-                  setProof({ id, link: links.proof(proveOwnership(state, id, k.secret, nonce)) });
+                  const p = proveOwnership(state, id, k.secret, nonce);
+                  setProof({ id, link: links.proof(p), code: encodeProof(p) });
                 }}
               >
                 Prove No. {id}
               </button>
             ))}
           </div>
-          {proof && (
+          {proof && returnUrl && (
+            <div className="milestone">
+              <strong>Proof ready for No. {proof.id}</strong>
+              <p>{site} will learn that you hold token No. {proof.id} in {view.collection}. Nothing else about you or your vault leaves this page.</p>
+              <div className="row" style={{ marginTop: 12 }}>
+                <a
+                  className="button primary"
+                  href={`${returnUrl.split("#")[0]}#seisin_proof=${proof.code}`}
+                  onClick={() => onDismiss()}
+                >
+                  Return to {site}
+                </a>
+              </div>
+            </div>
+          )}
+          {proof && !returnUrl && (
             <div className="milestone">
               <strong>Proof ready for No. {proof.id}</strong>
               <ShareLink link={proof.link} note="Send this link back to the verifier. It opens their Verify tab with the answer ready." qrAlt={`Proof link for token No. ${proof.id}`} />

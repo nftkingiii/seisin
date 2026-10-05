@@ -1,3 +1,5 @@
+<img src="docs/wordmark.svg" alt="Seisin" width="280">
+
 # Seisin
 
 **Proof of who holds what in a Zcash asset registry, without learning who they are.**

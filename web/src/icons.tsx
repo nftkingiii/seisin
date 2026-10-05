@@ -69,16 +69,23 @@ export const IconCode = () => (
   </Svg>
 );
 
-/** The mark: an S drawn as a single seal ribbon inside a ring. */
-export const Mark = () => (
-  <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden>
+/**
+ * The mark: a wax seal pressed with a sprig. "Livery of seisin" handed over title with a twig
+ * or a clod of earth; the seal is the record that says it happened.
+ */
+export const Mark = ({ size = 30 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden>
     <defs>
-      <linearGradient id="mk" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stopColor="#f3d27a" />
-        <stop offset="1" stopColor="#b8862e" />
+      <linearGradient id="seal-gold" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stopColor="#f1cf7a" />
+        <stop offset="1" stopColor="#c3923a" />
       </linearGradient>
     </defs>
-    <circle cx="16" cy="16" r="14.5" fill="none" stroke="url(#mk)" strokeWidth="1.5" />
-    <path d="M11 20.5c1.4 1.2 3 1.8 5 1.8 2.9 0 4.8-1.5 4.8-3.7 0-4.8-9.3-2.9-9.3-7.5 0-2 1.7-3.4 4.3-3.4 1.7 0 3.2.4 4.3 1.3" fill="none" stroke="url(#mk)" strokeWidth="2" strokeLinecap="round" />
+    <path d="M16.00 3.40 A2.75 2.75 0 0 1 20.82 4.36 A2.75 2.75 0 0 1 24.91 7.09 A2.75 2.75 0 0 1 27.64 11.18 A2.75 2.75 0 0 1 28.60 16.00 A2.75 2.75 0 0 1 27.64 20.82 A2.75 2.75 0 0 1 24.91 24.91 A2.75 2.75 0 0 1 20.82 27.64 A2.75 2.75 0 0 1 16.00 28.60 A2.75 2.75 0 0 1 11.18 27.64 A2.75 2.75 0 0 1 7.09 24.91 A2.75 2.75 0 0 1 4.36 20.82 A2.75 2.75 0 0 1 3.40 16.00 A2.75 2.75 0 0 1 4.36 11.18 A2.75 2.75 0 0 1 7.09 7.09 A2.75 2.75 0 0 1 11.18 4.36 A2.75 2.75 0 0 1 16.00 3.40Z" fill="url(#seal-gold)" />
+    <circle cx="16" cy="16" r="9.9" fill="none" stroke="#0e0e11" strokeOpacity=".45" strokeWidth=".6" />
+    <path d="M11.6 22.4Q15.7 17.4 20.4 9.6" fill="none" stroke="#0e0e11" strokeWidth="1.35" strokeLinecap="round" />
+    <ellipse cx="12.9" cy="17.1" rx="2.8" ry="1.25" transform="rotate(-150 12.9 17.1)" fill="#0e0e11" />
+    <ellipse cx="19.1" cy="15" rx="2.8" ry="1.25" transform="rotate(-35 19.1 15)" fill="#0e0e11" />
+    <ellipse cx="15.3" cy="11.9" rx="2.4" ry="1.1" transform="rotate(-120 15.3 11.9)" fill="#0e0e11" />
   </svg>
 );

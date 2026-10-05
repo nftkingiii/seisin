@@ -369,6 +369,22 @@ input[aria-invalid="true"] { border-color: rgba(240, 138, 128, 0.5); }
 .panel.request { border-color: rgba(227, 185, 90, 0.35); background: radial-gradient(500px 160px at 0% 0%, rgba(227, 185, 90, 0.08), transparent 70%), var(--panel); }
 .milestone .share { margin-top: 10px; }
 
+
+/* links styled as buttons */
+a.button { display: inline-flex; align-items: center; min-height: 42px; padding: 0 18px; border-radius: 12px; font: 500 14px var(--sans); text-decoration: none; }
+a.button.primary { background: var(--ink); color: #0b0b0d; }
+a.button.primary:hover { background: #ffffff; }
+
+/* ---------- first visit ---------- */
+.intro-steps { list-style: none; padding: 0; margin: 14px 0 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.intro-steps li { display: grid; align-content: start; gap: 6px; padding: 16px; border-radius: 12px; border: 1px solid var(--line); background: var(--well); }
+.intro-steps .dot { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 99px; font: 500 12px var(--mono); color: var(--gold); border: 1px solid rgba(227, 185, 90, 0.4); background: var(--gold-soft); }
+.intro-steps strong { font-weight: 500; margin-top: 4px; }
+.intro-steps p { margin: 0 0 6px; font-size: 13.5px; color: var(--ink-2); }
+.intro-steps .ghost { justify-self: start; }
+.intro-again { margin: -8px 0 16px; }
+@media (max-width: 760px) { .intro-steps { grid-template-columns: 1fr; } }
+
 /* ---------- collapsible sidebar (desktop) ----------
  * A 76px icon rail at rest. Hovering it, or tabbing into it, opens it to full
  * width over the page, without pushing the content; it closes when the pointer

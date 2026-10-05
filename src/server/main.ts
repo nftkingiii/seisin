@@ -5,7 +5,8 @@ import { dirname, join, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { initSync, check, make, addressHasReceiver } from "../../vendor/zcash-delivery-proof/zcash_delivery_proof_wasm.js";
 import { Store } from "./store.js";
-import { ownerKey, signTransfer, recordHash, type Change } from "../core/registry.js";
+import { ownerKey, signTransfer, recordHash, verifyOwnership, type Change } from "../core/registry.js";
+import { decodeProof } from "../core/proofcode.js";
 import { encodeMemo } from "../core/memo.js";
 import { checkAnchor, blockchair } from "../core/anchor.js";
 import { hexToBytes } from "../core/bytes.js";
@@ -34,6 +35,8 @@ const env = {
   // Used to build claim links; falls back to the request's own host.
   publicUrl: (process.env.PUBLIC_URL ?? "").replace(/\/$/, ""),
   // A deliberately public vault backup, so anyone can try a proof against an anchored record.
+  // Gate checks normally need a record locked on Zcash; local development can accept an unlocked one.
+  gateAllowUnlocked: process.env.GATE_ALLOW_UNLOCKED === "1",
   demoVault: /^[0-9a-f]{64}$/.test(process.env.DEMO_VAULT_BACKUP ?? "") ? process.env.DEMO_VAULT_BACKUP! : "",
   commit: process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.COMMIT ?? "local",
 };
@@ -90,6 +93,8 @@ function notifyLocker() {
   if (!env.lockerUrl) return;
   fetch(env.lockerUrl + "/notify", { method: "POST", signal: AbortSignal.timeout(3000) }).catch(() => {});
 }
+
+const GATE_TTL = 10 * 60_000;
 
 // ---- automatic sealing ----
 
@@ -303,6 +308,72 @@ async function api(req: IncomingMessage, res: ServerResponse, path: string) {
   }
 
   /*
+   * Token gating. A site asks for a challenge, sends the visitor to their vault, and gets a proof
+   * link back. The challenge is bound to the site that asked and works once, and the proof is
+   * checked against the newest record locked on Zcash, re-read from mainnet.
+   */
+  if (m === "POST" && path === "/api/gate/challenge") {
+    const { returnUrl } = await body(req);
+    let ret: URL;
+    try {
+      ret = new URL(String(returnUrl));
+    } catch {
+      throw new HttpError(400, "returnUrl must be the page to come back to");
+    }
+    if (!/^https?:$/.test(ret.protocol)) throw new HttpError(400, "returnUrl must be http or https");
+    const origin = req.headers.origin;
+    if (origin && origin !== ret.origin) throw new HttpError(400, "returnUrl must be on the site asking for the challenge");
+    const nonce = randomBytes(32).toString("hex");
+    store.addGateChallenge(nonce, ret.origin);
+    ret.hash = "";
+    const base = env.publicUrl || `${req.headers["x-forwarded-proto"] ?? "http"}://${req.headers.host}`;
+    return send(res, 200, {
+      collection: store.collection(),
+      nonce,
+      expiresAt: new Date(Date.now() + GATE_TTL).toISOString(),
+      proveUrl: `${base}/#prove=${store.collection()}.${nonce}&return=${encodeURIComponent(ret.toString())}`,
+    });
+  }
+
+  if (m === "POST" && path === "/api/gate/verify") {
+    const b = await body(req);
+    const origin = req.headers.origin ?? b.origin;
+    let p;
+    try {
+      p = decodeProof(String(b.proof ?? ""));
+    } catch {
+      throw new HttpError(400, "that is not a Seisin proof");
+    }
+    const c = store.gateChallenge(p.nonce);
+    if (!c) throw new HttpError(403, "this proof answers a challenge Seisin did not issue for a site");
+    if (c.origin !== origin) throw new HttpError(403, "this proof was made for a different site");
+    if (c.usedAt) throw new HttpError(409, "this proof has already been used");
+    if (Date.now() - c.createdAt > GATE_TTL) throw new HttpError(410, "this challenge has expired; ask for a new one");
+    const rows = store.epochs();
+    const locked = rows.filter((r) => r.anchor).pop();
+    const target = locked ?? (env.gateAllowUnlocked ? rows[rows.length - 1] : undefined);
+    if (!target) throw new HttpError(409, "no record is locked on Zcash yet");
+    let height: number | null = null;
+    if (target.anchor) {
+      const a = await checkAnchor({ txid: target.anchor.txid, proof: target.anchor.proof }, env.anchorAddress, blockchair(), zdp);
+      if (recordHash(a.record) !== target.hash) throw new HttpError(500, "the lock on Zcash does not match the stored record");
+      height = a.height;
+    }
+    const why = verifyOwnership(p, target.record, p.nonce);
+    if (why) throw new HttpError(403, why);
+    if (!store.useGateChallenge(p.nonce)) throw new HttpError(409, "this proof has already been used");
+    return send(res, 200, {
+      ok: true,
+      collection: p.collection,
+      tokenId: p.tokenId,
+      record: target.record.epoch,
+      locked: !!target.anchor,
+      lockedAtHeight: height,
+      lockTxid: target.anchor?.txid ?? null,
+    });
+  }
+
+  /*
    * Moving existing holders onto Seisin. The operator uploads token -> shielded
    * address; each token gets a one-time claim code, delivered privately in the
    * encrypted memo of a small payment to that address. Only a hash of the code
@@ -393,6 +464,19 @@ createServer(async (req, res) => {
     if (path === "/SPEC.md") {
       res.writeHead(200, { "content-type": "text/markdown; charset=utf-8" });
       return res.end(readFileSync(join(root, "SPEC.md")));
+    }
+    // Gate calls come from other sites' pages: allow them by origin, and answer the preflight.
+    if (path.startsWith("/api/gate/")) {
+      if (req.headers.origin) {
+        res.setHeader("access-control-allow-origin", req.headers.origin);
+        res.setHeader("vary", "origin");
+      }
+      res.setHeader("access-control-allow-methods", "POST, OPTIONS");
+      res.setHeader("access-control-allow-headers", "content-type");
+      if (req.method === "OPTIONS") {
+        res.writeHead(204);
+        return res.end();
+      }
     }
     if (path.startsWith("/api/")) return await api(req, res, path);
     serveStatic(res, path);

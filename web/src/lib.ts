@@ -245,7 +245,7 @@ export const links = {
 };
 
 export type Intent =
-  | { kind: "prove"; collection: string; nonce: string }
+  | { kind: "prove"; collection: string; nonce: string; returnUrl?: string }
   | { kind: "check"; proof: string }
   | { kind: "send"; collection: string; tokenId: number; to: string }
   | { kind: "claim"; collection: string; tokenId: number; code: string };
@@ -253,8 +253,16 @@ export type Intent =
 /** Turns a pasted link, code or URL hash into the action it asks for. */
 export function parseIntent(raw: string): Intent | null {
   const h = raw.trim().replace(/^.*#/, "");
-  let m = h.match(/^prove=([a-z0-9-]+)\.([0-9a-f]{64})$/) ?? raw.trim().match(/^seisin-chal:([a-z0-9-]+):([0-9a-f]{64})$/);
-  if (m) return { kind: "prove", collection: m[1], nonce: m[2] };
+  let m = h.match(/^prove=([a-z0-9-]+)\.([0-9a-f]{64})(?:&return=(.+))?$/) ?? raw.trim().match(/^seisin-chal:([a-z0-9-]+):([0-9a-f]{64})$/);
+  if (m) {
+    // A site that gates on holding a token asks for the proof to come back to its own page.
+    let returnUrl: string | undefined;
+    try {
+      const u = m[3] ? new URL(decodeURIComponent(m[3])) : null;
+      if (u && /^https?:$/.test(u.protocol)) returnUrl = u.toString();
+    } catch {}
+    return { kind: "prove", collection: m[1], nonce: m[2], returnUrl };
+  }
   m = h.match(/^check=(.+)$/);
   if (m) return { kind: "check", proof: m[1] };
   m = h.match(/^send=([a-z0-9-]+)\.(\d+)\.([0-9a-f]{64})$/) ?? raw.trim().match(/^seisin-recv:([a-z0-9-]+):(\d+):([0-9a-f]{64})$/);

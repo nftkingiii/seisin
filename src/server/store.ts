@@ -40,6 +40,7 @@ export class Store {
       create table if not exists epochs (n integer primary key, record text not null, changes text not null, anchor text, sealed_at text not null);
       create table if not exists pending (id integer primary key autoincrement, change text not null, note text not null, at text not null);
       create table if not exists claims (token_id integer primary key, code_hash text not null, created_at text not null, used_at text);
+      create table if not exists gate (nonce text primary key, origin text not null, created_at integer not null, used_at integer);
     `);
   }
 
@@ -134,6 +135,26 @@ export class Store {
 
   openClaims(): number {
     return (this.db.prepare("select count(*) n from claims where used_at is null").get() as { n: number }).n;
+  }
+
+  /*
+   * Challenges issued to sites that gate on holding a token. Each is bound to the site that asked
+   * for it and can be answered once, so a proof cannot be replayed or relayed to another site.
+   */
+  addGateChallenge(nonce: string, origin: string) {
+    const now = Date.now();
+    this.db.prepare("delete from gate where created_at < ?").run(now - 86_400_000);
+    this.db.prepare("insert into gate values (?, ?, ?, null)").run(nonce, origin, now);
+  }
+
+  gateChallenge(nonce: string): { origin: string; createdAt: number; usedAt: number | null } | undefined {
+    const r = this.db.prepare("select origin, created_at, used_at from gate where nonce = ?").get(nonce) as { origin: string; created_at: number; used_at: number | null } | undefined;
+    return r && { origin: r.origin, createdAt: r.created_at, usedAt: r.used_at };
+  }
+
+  /** Marks a challenge answered; false if it already was. */
+  useGateChallenge(nonce: string): boolean {
+    return this.db.prepare("update gate set used_at = ? where nonce = ? and used_at is null").run(Date.now(), nonce).changes === 1;
   }
 
   setAnchor(n: number, a: StoredAnchor) {
