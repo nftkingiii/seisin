@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import QRCode from "qrcode";
 import { proveOwnership, verifyOwnership, signTransfer, ownerKey, type OwnershipProof, type RegistryState } from "../../src/core/registry.js";
 import { hexToBytes } from "../../src/core/bytes.js";
+import { encryptBackup, decryptBackup, MIN_PASSPHRASE } from "../../src/core/backup.js";
 import {
   api,
   audit,
@@ -680,6 +681,7 @@ function VaultTab({ view, log, refresh, intent, done }: { view: RegistryView; lo
                     {view.demoIssuance && <DemoClaim view={view} refresh={refresh} />}
                   </>
                 )}
+                {backed && !hasToken && <BuyPanel view={view} refresh={refresh} compact />}
               </div>
             </li>
           </ol>
@@ -712,6 +714,7 @@ function VaultTab({ view, log, refresh, intent, done }: { view: RegistryView; lo
         </ul>
         {view.demoIssuance && !vault.isDemo() && <DemoClaim view={view} refresh={refresh} />}
       </Section>
+      {!vault.isDemo() && <BuyPanel view={view} refresh={refresh} />}
       {!vault.isDemo() && <ReceivePanel view={view} />}
       <Section title="Backup">
         <BackupPanel
@@ -825,9 +828,10 @@ function ClaimRequest({ view, intent, refresh, onDone }: { view: RegistryView; i
 }
 
 function BackupConfirm({ onDone }: { onDone: () => void }) {
-  const [stage, setStage] = useState<"show" | "check">("show");
+  const [stage, setStage] = useState<"show" | "check" | "file">("show");
   const [tail, setTail] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  if (stage === "file") return <EncryptedBackup onSaved={onDone} onCancel={() => setStage("show")} />;
   return stage === "show" ? (
     <>
       <p>Write this down somewhere offline. Anyone with it can move your tokens, and without it a lost browser means lost tokens.</p>
@@ -835,6 +839,9 @@ function BackupConfirm({ onDone }: { onDone: () => void }) {
       <div className="row" style={{ marginTop: 12 }}>
         <button className="primary" onClick={() => setStage("check")}>
           I wrote it down
+        </button>
+        <button className="link" onClick={() => setStage("file")}>
+          Download an encrypted backup file instead
         </button>
       </div>
     </>
@@ -882,6 +889,8 @@ function BackupConfirm({ onDone }: { onDone: () => void }) {
 function RestoreForm({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
   const [v, setV] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [fromFile, setFromFile] = useState(false);
+  if (fromFile) return <RestoreFile onDone={onDone} onCancel={() => setFromFile(false)} />;
   return (
     <form
       className="stack"
@@ -911,6 +920,9 @@ function RestoreForm({ onDone, onCancel }: { onDone: () => void; onCancel: () =>
       <div className="row">
         <button className="primary" type="submit" disabled={!v.trim()}>
           Restore
+        </button>
+        <button className="link" type="button" onClick={() => setFromFile(true)}>
+          Restore from a backup file
         </button>
         <button className="link" type="button" onClick={onCancel}>
           Cancel
@@ -1144,6 +1156,7 @@ function ReceivePanel({ view }: { view: RegistryView }) {
 
 function BackupPanel({ onForget }: { onForget: () => void }) {
   const [show, setShow] = useState(false);
+  const [file, setFile] = useState(false);
   const [confirm, setConfirm] = useState(false);
   return (
     <div className="stack">
@@ -1174,7 +1187,142 @@ function BackupPanel({ onForget }: { onForget: () => void }) {
         )}
       </div>
       {show && <Code>{vault.backup() ?? ""}</Code>}
+      {file ? (
+        <EncryptedBackup onSaved={() => setFile(false)} onCancel={() => setFile(false)} />
+      ) : (
+        <div className="row">
+          <button className="ghost" onClick={() => setFile(true)}>
+            Download an encrypted backup file
+          </button>
+        </div>
+      )}
     </div>
+  );
+}
+
+/** Saves the vault secret as a file sealed with a passphrase the holder types twice. */
+function EncryptedBackup({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => void }) {
+  const [a, setA] = useState("");
+  const [b, setB] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+  return (
+    <form
+      className="stack"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        if (a.length < MIN_PASSPHRASE) return setErr(`Use at least ${MIN_PASSPHRASE} characters.`);
+        if (a !== b) return setErr("The two passphrases do not match.");
+        setBusy(true);
+        try {
+          const file = await encryptBackup(vault.backup()!, a);
+          const url = URL.createObjectURL(new Blob([file], { type: "application/json" }));
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = `seisin-vault-${new Date().toISOString().slice(0, 10)}.json`;
+          link.click();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+          vault.markBackedUp();
+          toast(true, "Encrypted backup downloaded. Keep the file and the passphrase in different places.");
+          onSaved();
+        } catch (x) {
+          setErr((x as Error).message);
+        }
+        setBusy(false);
+      }}
+    >
+      <p className="small" style={{ margin: 0 }}>
+        The file is useless without the passphrase, and the passphrase cannot be recovered. Keep them in different places.
+      </p>
+      <label htmlFor="bp1">Passphrase</label>
+      <input
+        id="bp1"
+        type="password"
+        value={a}
+        onChange={(e) => {
+          setA(e.target.value);
+          setErr(null);
+        }}
+        autoComplete="new-password"
+      />
+      <label htmlFor="bp2">Type it again</label>
+      <input
+        id="bp2"
+        type="password"
+        value={b}
+        onChange={(e) => {
+          setB(e.target.value);
+          setErr(null);
+        }}
+        autoComplete="new-password"
+        aria-invalid={!!err}
+      />
+      {err && <p className="field-err">{err}</p>}
+      <div className="row">
+        <button className="primary" type="submit" disabled={busy || !a || !b}>
+          {busy ? "Encrypting…" : "Download backup file"}
+        </button>
+        <button className="link" type="button" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function RestoreFile({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
+  const [text, setText] = useState<string | null>(null);
+  const [pass, setPass] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  return (
+    <form
+      className="stack"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        try {
+          vault.restore(await decryptBackup(text ?? "", pass));
+          onDone();
+        } catch (x) {
+          setErr((x as Error).message);
+        }
+        setBusy(false);
+      }}
+    >
+      <label htmlFor="bfile">Backup file</label>
+      <input
+        id="bfile"
+        type="file"
+        accept="application/json,.json"
+        onChange={async (e) => {
+          setText((await e.target.files?.[0]?.text()) ?? null);
+          setErr(null);
+        }}
+      />
+      <label htmlFor="bpass">Passphrase</label>
+      <input
+        id="bpass"
+        type="password"
+        value={pass}
+        onChange={(e) => {
+          setPass(e.target.value);
+          setErr(null);
+        }}
+        autoComplete="current-password"
+        aria-invalid={!!err}
+      />
+      {err && <p className="field-err">{err}</p>}
+      <div className="row">
+        <button className="primary" type="submit" disabled={busy || !text || !pass}>
+          {busy ? "Decrypting…" : "Restore"}
+        </button>
+        <button className="link" type="button" onClick={onCancel}>
+          Back
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -1390,6 +1538,7 @@ function OperatorTab({ view, refresh }: { view: RegistryView; refresh: () => Pro
       {view.autoLock && <LockerPanel />}
       {needsLock && <LockPanel view={view} record={head.epoch} token={token} busy={busy} act={act} />}
       <ClaimsPanel view={view} token={token} />
+      <SalesPanel token={token} />
     </>
   );
 }
@@ -1585,6 +1734,168 @@ function LockerPanel() {
           </>
         )}
       </dl>
+    </Section>
+  );
+}
+
+type Sale = { available: boolean; collection?: string; address?: string; priceZats?: number; amount?: string; forSale?: number[] };
+
+/**
+ * Buying a token's first transfer with ZEC. The memo carries a fresh key from this vault, so the
+ * token goes to a key nobody can link to the paying wallet; only the operator can read the memo.
+ */
+function BuyPanel({ view, refresh, compact }: { view: RegistryView; refresh: () => Promise<void>; compact?: boolean }) {
+  const [sale, setSale] = useState<Sale | null>(null);
+  const [id, setId] = useState<number | null>(null);
+  const [order, setOrder] = useState<{ id: number; uri: string; memo: string } | null>(null);
+  const [txid, setTxid] = useState("");
+  const [state, setState] = useState<{ busy: boolean; note: string | null; err: string | null }>({ busy: false, note: null, err: null });
+  const retry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const toast = useToast();
+
+  useEffect(() => {
+    fetch("/api/sale")
+      .then((r) => r.json())
+      .then((s: Sale) => {
+        setSale(s);
+        if (s.forSale?.length) setId(s.forSale[0]);
+      }, () => setSale({ available: false }));
+    return () => clearTimeout(retry.current);
+  }, []);
+
+  if (!sale?.available || !sale.forSale?.length) return null;
+
+  const start = () => {
+    if (id === null) return;
+    const key = vault.fresh(view.collection, id).public;
+    const memo = `SEISIN-BUY ${view.collection} ${id} ${key}`;
+    const b64 = btoa(memo).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    setOrder({ id, memo, uri: `zcash:${sale.address}?amount=${sale.amount}&memo=${b64}` });
+  };
+
+  const submit = async (attempt = 0) => {
+    setState({ busy: true, note: null, err: null });
+    const r = await fetch("/api/buy", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ txid: txid.trim() }) });
+    const b = await r.json().catch(() => ({}));
+    if (r.status === 202) {
+      toast(true, `Token No. ${b.tokenId} is yours. It arrives ${sealEta(view)}.`);
+      setOrder(null);
+      setTxid("");
+      setState({ busy: false, note: null, err: null });
+      return refresh();
+    }
+    if (r.status === 425 && attempt < 20) {
+      setState({ busy: true, note: "Waiting for your payment to be mined. This page checks again every minute.", err: null });
+      retry.current = setTimeout(() => submit(attempt + 1), 60_000);
+      return;
+    }
+    setState({ busy: false, note: null, err: b.error ?? `could not check the payment (${r.status})` });
+  };
+
+  const body = !order ? (
+    <>
+      <p className="muted">
+        Buy a token's first transfer for {sale.amount} ZEC. The payment's encrypted memo carries a fresh key from this vault, so the token cannot be linked to the wallet that paid.
+      </p>
+      <div className="row" style={{ marginTop: 14 }}>
+        <label htmlFor="buy-id" className="sr">
+          Token to buy
+        </label>
+        <select id="buy-id" className="narrow" value={id ?? ""} onChange={(e) => setId(Number(e.target.value))}>
+          {sale.forSale.map((n) => (
+            <option key={n} value={n}>
+              No. {n}
+            </option>
+          ))}
+        </select>
+        <button className="secondary" onClick={start}>
+          Buy No. {id} for {sale.amount} ZEC
+        </button>
+      </div>
+    </>
+  ) : (
+    <div className="stack">
+      <div className="anchor">
+        <QR value={order.uri} alt={`Payment request for token No. ${order.id}`} size={220} />
+        <div className="stack" style={{ marginTop: 0 }}>
+          <p className="muted" style={{ marginTop: 0 }}>
+            Pay {sale.amount} ZEC from any shielded Zcash wallet. Scanning the code fills in the address, amount and memo. If your wallet does not read the memo from the code, paste it exactly.
+          </p>
+          <Code>{order.memo}</Code>
+          <Code>{sale.address!}</Code>
+        </div>
+      </div>
+      <form
+        className="stack"
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+      >
+        <label htmlFor="buy-tx">Transaction id, once you have paid</label>
+        <input id="buy-tx" value={txid} onChange={(e) => setTxid(e.target.value)} spellCheck={false} autoComplete="off" aria-invalid={!!state.err} />
+        {state.err && <p className="field-err">{state.err}</p>}
+        {state.note && <p className="small">{state.note}</p>}
+        <div className="row">
+          <button className="primary" type="submit" disabled={state.busy || !/^[0-9a-f]{64}$/.test(txid.trim())}>
+            {state.busy ? "Checking…" : "Claim my token"}
+          </button>
+          <button
+            className="link"
+            type="button"
+            onClick={() => {
+              clearTimeout(retry.current);
+              setOrder(null);
+              setState({ busy: false, note: null, err: null });
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+
+  return compact ? <div className="buy-compact">{body}</div> : <Section title="Buy a token">{body}</Section>;
+}
+
+/** What buyers paid for, and anything owed back because a token was taken before the payment landed. */
+function SalesPanel({ token }: { token: string }) {
+  const [list, setList] = useState<{ txid: string; tokenId: number; value: number; status: string; at: string }[] | null>(null);
+  const [sale, setSale] = useState<Sale | null>(null);
+  useEffect(() => {
+    fetch("/api/sale").then((r) => r.json()).then(setSale, () => setSale({ available: false }));
+  }, []);
+  useEffect(() => {
+    if (!token) return;
+    fetch("/api/operator/purchases", { headers: { authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : { purchases: null }))
+      .then((b) => setList(b.purchases), () => setList(null));
+  }, [token]);
+  if (!sale?.available) return null;
+  const refunds = (list ?? []).filter((p) => p.status === "refund-due");
+  return (
+    <Section title="Sales" aside={refunds.length ? <span className="pill wait">{refunds.length} refund{refunds.length === 1 ? "" : "s"} due</span> : undefined}>
+      <p className="muted">
+        Tokens sell for {sale.amount} ZEC to <code>{short(sale.address ?? "", 10)}</code>. {sale.forSale?.length ?? 0} still for sale.
+      </p>
+      {!token ? (
+        <p className="small">Enter the operator token to see purchases.</p>
+      ) : !list || list.length === 0 ? (
+        <p className="small">No purchases yet.</p>
+      ) : (
+        <ul className="plain">
+          {[...refunds, ...list.filter((p) => p.status !== "refund-due")].map((p) => (
+            <li key={p.txid}>
+              No. {p.tokenId} · {(p.value / 1e8).toFixed(5)} ZEC ·{" "}
+              {p.status === "refund-due" ? <strong>refund due</strong> : "issued"} ·{" "}
+              <a href={explorer(p.txid)} target="_blank" rel="noreferrer">
+                {short(p.txid, 6)}
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
     </Section>
   );
 }

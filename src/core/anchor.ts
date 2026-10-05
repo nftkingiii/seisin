@@ -49,8 +49,7 @@ export async function checkAnchor(a: Anchor, anchorAddress: string, chain: Chain
 }
 
 /** Blockchair's public API: raw bytes plus the block it was mined in. */
-export function blockchair(fetchFn: typeof fetch = fetch): ChainSource {
-  const base = "https://api.blockchair.com/zcash";
+export function blockchair(fetchFn: typeof fetch = fetch, base = "https://api.blockchair.com/zcash"): ChainSource {
   return {
     async tx(txid) {
       const [raw, dash] = await Promise.all([

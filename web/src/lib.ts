@@ -193,6 +193,10 @@ export const vault = {
   backedUp(): boolean {
     return read(BACKED) === "1";
   },
+  /** The holder saved an encrypted backup file (they typed its passphrase twice). */
+  markBackedUp() {
+    write(BACKED, "1");
+  },
   confirmBackup(tail: string): boolean {
     const b = read(SEED);
     const ok = !!b && tail.trim().toLowerCase() === b.slice(-6);

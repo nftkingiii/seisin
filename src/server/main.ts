@@ -7,6 +7,7 @@ import { initSync, check, make, addressHasReceiver } from "../../vendor/zcash-de
 import { Store } from "./store.js";
 import { ownerKey, signTransfer, recordHash, verifyOwnership, type Change } from "../core/registry.js";
 import { decodeProof } from "../core/proofcode.js";
+import { readPurchase } from "./sales.js";
 import { encodeMemo } from "../core/memo.js";
 import { checkAnchor, blockchair } from "../core/anchor.js";
 import { hexToBytes } from "../core/bytes.js";
@@ -37,6 +38,12 @@ const env = {
   // A deliberately public vault backup, so anyone can try a proof against an anchored record.
   // Gate checks normally need a record locked on Zcash; local development can accept an unlocked one.
   gateAllowUnlocked: process.env.GATE_ALLOW_UNLOCKED === "1",
+  // Paid first sales. The viewing key is secret: it reads which key each payment was for.
+  salesAddress: process.env.SALES_ADDRESS ?? "",
+  salesUivk: process.env.SALES_UIVK ?? "",
+  priceZats: Number(process.env.PRICE_ZATS ?? 50000),
+  // Where transactions are fetched from (Blockchair's API shape); tests point it at a stand-in.
+  chainApi: (process.env.CHAIN_API ?? "https://api.blockchair.com/zcash").replace(/\/$/, ""),
   demoVault: /^[0-9a-f]{64}$/.test(process.env.DEMO_VAULT_BACKUP ?? "") ? process.env.DEMO_VAULT_BACKUP! : "",
   commit: process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.COMMIT ?? "local",
 };
@@ -209,7 +216,7 @@ async function recordAnchor(epoch: unknown, txid: unknown) {
   const row = typeof epoch === "number" ? store.epochs()[epoch] : undefined;
   if (!row) throw new HttpError(404, "no such epoch");
   if (typeof txid !== "string" || !/^[0-9a-f]{64}$/.test(txid)) throw new HttpError(400, "txid must be 32 bytes of hex");
-  const chain = blockchair();
+  const chain = blockchair(fetch, env.chainApi);
   const { hex } = await chain.tx(txid);
   const found = JSON.parse(make(hex, env.anchorUivk)) as { proof: string }[];
   const errors: string[] = [];
@@ -291,6 +298,47 @@ async function api(req: IncomingMessage, res: ServerResponse, path: string) {
     return send(res, 202, { queued: true, registry: registryView() });
   }
 
+  if (m === "GET" && path === "/api/sale") {
+    if (!env.salesAddress || !env.salesUivk) return send(res, 200, { available: false });
+    const s = store.state();
+    const queued = new Set(store.pending().map((p) => p.change.tokenId));
+    const reserved = store.reservedByClaims();
+    const forSale = s.owners.map((o, i) => i).filter((i) => s.owners[i] === issuerKey(i).public && !queued.has(i) && !reserved.has(i));
+    const amount = (env.priceZats / 1e8).toFixed(8).replace(/0+$/, "");
+    return send(res, 200, { available: true, collection: s.collection, address: env.salesAddress, priceZats: env.priceZats, amount, forSale });
+  }
+
+  if (m === "POST" && path === "/api/buy") {
+    if (!env.salesAddress || !env.salesUivk) throw new HttpError(404, "this collection is not on sale");
+    const { txid } = await body(req);
+    if (typeof txid !== "string" || !/^[0-9a-f]{64}$/.test(txid)) throw new HttpError(400, "paste the transaction id of your payment");
+    const seen = store.purchase(txid);
+    if (seen) throw new HttpError(409, seen.status === "issued" ? `that payment already bought No. ${seen.tokenId}` : "that payment is already waiting for a refund");
+    const { hex, height } = await blockchair(fetch, env.chainApi).tx(txid);
+    if (height === null) throw new HttpError(425, "your payment is not mined yet; this page will try again in a minute");
+    let p;
+    try {
+      p = readPurchase(hex, env.salesUivk, store.collection(), env.priceZats, { make, check });
+    } catch (e) {
+      throw new HttpError(422, (e as Error).message);
+    }
+    const s = store.state();
+    const k = issuerKey(p.tokenId);
+    const taken = !(p.tokenId < s.owners.length) || s.owners[p.tokenId] !== k.public || store.pending().some((q) => q.change.tokenId === p.tokenId) || store.reservedByClaims().has(p.tokenId);
+    if (taken) {
+      store.addPurchase(txid, p.tokenId, p.value, "refund-due");
+      throw new HttpError(409, `No. ${p.tokenId} was taken before your payment arrived. The operator has been told and will refund you.`);
+    }
+    store.submit(signTransfer(s.collection, s.epoch, { tokenId: p.tokenId, from: k.public, to: p.to, ref: p.ref }, k.secret), "sold for ZEC");
+    store.addPurchase(txid, p.tokenId, p.value, "issued");
+    return send(res, 202, { queued: true, tokenId: p.tokenId, registry: registryView() });
+  }
+
+  if (m === "GET" && path === "/api/operator/purchases") {
+    requireOperator(req);
+    return send(res, 200, { purchases: store.purchases() });
+  }
+
   const req_ = path.match(/^\/api\/anchor-request\/(\d+)$/);
   if (m === "GET" && req_) return send(res, 200, anchorRequest(Number(req_[1])));
 
@@ -355,7 +403,7 @@ async function api(req: IncomingMessage, res: ServerResponse, path: string) {
     if (!target) throw new HttpError(409, "no record is locked on Zcash yet");
     let height: number | null = null;
     if (target.anchor) {
-      const a = await checkAnchor({ txid: target.anchor.txid, proof: target.anchor.proof }, env.anchorAddress, blockchair(), zdp);
+      const a = await checkAnchor({ txid: target.anchor.txid, proof: target.anchor.proof }, env.anchorAddress, blockchair(fetch, env.chainApi), zdp);
       if (recordHash(a.record) !== target.hash) throw new HttpError(500, "the lock on Zcash does not match the stored record");
       height = a.height;
     }

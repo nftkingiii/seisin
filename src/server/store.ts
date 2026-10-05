@@ -41,6 +41,7 @@ export class Store {
       create table if not exists pending (id integer primary key autoincrement, change text not null, note text not null, at text not null);
       create table if not exists claims (token_id integer primary key, code_hash text not null, created_at text not null, used_at text);
       create table if not exists gate (nonce text primary key, origin text not null, created_at integer not null, used_at integer);
+      create table if not exists purchases (txid text primary key, token_id integer not null, value integer not null, status text not null, at text not null);
     `);
   }
 
@@ -155,6 +156,25 @@ export class Store {
   /** Marks a challenge answered; false if it already was. */
   useGateChallenge(nonce: string): boolean {
     return this.db.prepare("update gate set used_at = ? where nonce = ? and used_at is null").run(Date.now(), nonce).changes === 1;
+  }
+
+  /** Each paying transaction counts once: issued, or owed a refund when the token was already gone. */
+  purchase(txid: string): { tokenId: number; status: string } | undefined {
+    const r = this.db.prepare("select token_id, status from purchases where txid = ?").get(txid) as { token_id: number; status: string } | undefined;
+    return r && { tokenId: r.token_id, status: r.status };
+  }
+
+  addPurchase(txid: string, tokenId: number, value: number, status: "issued" | "refund-due") {
+    this.db.prepare("insert into purchases values (?, ?, ?, ?, ?)").run(txid, tokenId, value, status, new Date().toISOString());
+  }
+
+  purchases(): { txid: string; tokenId: number; value: number; status: string; at: string }[] {
+    return (this.db.prepare("select * from purchases order by at desc").all() as any[]).map((r) => ({ txid: r.txid, tokenId: r.token_id, value: r.value, status: r.status, at: r.at }));
+  }
+
+  /** Tokens promised to an existing holder through a claim code that has not been used yet. */
+  reservedByClaims(): Set<number> {
+    return new Set((this.db.prepare("select token_id from claims where used_at is null").all() as { token_id: number }[]).map((r) => r.token_id));
   }
 
   setAnchor(n: number, a: StoredAnchor) {

@@ -370,6 +370,10 @@ input[aria-invalid="true"] { border-color: rgba(240, 138, 128, 0.5); }
 .milestone .share { margin-top: 10px; }
 
 
+select { min-height: 44px; padding: 0 12px; border-radius: 12px; color: var(--ink); font: 14px var(--sans); background: var(--well); border: 1px solid var(--line-2); }
+select.narrow { width: 140px; }
+.buy-compact { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+
 /* links styled as buttons */
 a.button { display: inline-flex; align-items: center; min-height: 42px; padding: 0 18px; border-radius: 12px; font: 500 14px var(--sans); text-decoration: none; }
 a.button.primary { background: var(--ink); color: #0b0b0d; }
