@@ -6,7 +6,7 @@
 
 import { createServer } from "node:http";
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -45,12 +45,30 @@ const state = existsSync(stateFile)
 const save = () => writeFileSync(stateFile, JSON.stringify(state, null, 2));
 let nextCheck = null;
 
-function devtool(args, timeoutMs = 10 * 60_000) {
+// The devtool's own wallet lives in a subfolder, so the locker's state file never mixes with it.
+const walletDir = join(env.wallet, "devtool");
+
+/** The lines worth showing from a failed command: no colour codes, no routine INFO logging. */
+const tail = (text) =>
+  text
+    .replace(/\x1b\[[0-9;]*m/g, "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !/\bINFO\b/.test(l))
+    .slice(-4)
+    .join(" | ");
+
+/**
+ * Runs one devtool wallet command. Input is always given and closed: some commands read a line
+ * from stdin when there is no terminal, and an open stdin would leave them waiting forever.
+ */
+function devtool(args, { timeoutMs = 10 * 60_000, input = "" } = {}) {
   return new Promise((resolve, reject) => {
-    execFile(env.devtool, ["wallet", "-w", env.wallet, ...args], { timeout: timeoutMs, maxBuffer: 16 << 20 }, (err, stdout, stderr) => {
-      if (err) reject(new Error(`${args[0]} failed: ${(stderr || err.message).trim().split("\n").slice(-3).join(" | ")}`));
+    const child = execFile(env.devtool, ["wallet", "-w", walletDir, ...args], { timeout: timeoutMs, maxBuffer: 16 << 20 }, (err, stdout, stderr) => {
+      if (err) reject(new Error(`${args[0]} failed: ${tail(`${stderr}\n${stdout}`) || err.message}`));
       else resolve(stdout);
     });
+    child.stdin?.end(input);
   });
 }
 
@@ -61,12 +79,15 @@ async function api(path, init) {
   return b;
 }
 
-const walletExists = () => existsSync(join(env.wallet, "data.sqlite")) || existsSync(join(env.wallet, "keys.toml"));
+// keys.toml is written last, so a wallet without it never got a seed and cannot hold funds.
+const walletReady = () => existsSync(join(walletDir, "keys.toml"));
 
 async function ensureWallet() {
-  if (!walletExists()) {
+  if (!walletReady()) {
+    rmSync(walletDir, { recursive: true, force: true });
     console.log("creating the locker wallet");
-    await devtool(["init", "--name", "seisin-locker", "-i", idFile, "-n", env.network, "-s", env.server]);
+    // An empty line asks the devtool to generate a new seed phrase, stored encrypted to the age identity.
+    await devtool(["init", "--name", "seisin-locker", "-i", idFile, "-n", env.network, "-s", env.server], { input: "\n" });
   }
   if (!state.address) {
     const out = await devtool(["list-addresses", "--receiver", "orchard"]);
@@ -77,7 +98,7 @@ async function ensureWallet() {
 }
 
 async function balance() {
-  await devtool(["sync", "-s", env.server], 20 * 60_000);
+  await devtool(["sync", "-s", env.server], { timeoutMs: 20 * 60_000 });
   const j = JSON.parse((await devtool(["balance", "--json"])).trim().split("\n").pop());
   state.balance = j;
   return j;

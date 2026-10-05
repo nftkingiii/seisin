@@ -77,7 +77,8 @@ function locker(name: string, extra: Record<string, string> = {}, seedState?: ob
   });
   procs.push(p);
   const status = () => fetch(`http://127.0.0.1:${port}/status`).then((r) => r.json()).catch(() => null);
-  const calls = () => (existsSync(join(w, "calls.log")) ? readFileSync(join(w, "calls.log"), "utf8") : "");
+  const log = join(w, "devtool", "calls.log");
+  const calls = () => (existsSync(log) ? readFileSync(log, "utf8") : "");
   return { status, calls, stop: () => stopAll(p) };
 }
 
@@ -88,6 +89,17 @@ const changeSomething = async () => {
   await fetch(seisin + "/api/issue", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tokenId: id, to }) });
   assert.ok(await until(async () => (await fetch(seisin + "/api/registry").then((r) => r.json())).pending.length === 0), "change was not published");
 };
+
+test("creates its wallet without waiting on input, and starts clean after a half-finished attempt", async () => {
+  // a previous attempt that died before writing keys.toml
+  mkdirSync(join(dir, "fresh", "devtool"), { recursive: true });
+  writeFileSync(join(dir, "fresh", "devtool", "data.sqlite"), "partial");
+  const l = locker("fresh");
+  assert.ok(await until(async () => !!(await l.status())?.address), `no wallet; status: ${JSON.stringify(await l.status())}`);
+  assert.ok(existsSync(join(dir, "fresh", "devtool", "keys.toml")));
+  assert.ok(!existsSync(join(dir, "fresh", "devtool", "data.sqlite")), "leftover from the failed attempt was kept");
+  await l.stop();
+});
 
 test("does nothing while there is nothing new to lock", async () => {
   const l = locker("idle");

@@ -1,15 +1,20 @@
 #!/usr/bin/env node
 // Stands in for zcash-devtool in tests: same commands and output shapes, no network or keys.
-import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const args = process.argv.slice(2);
 const dir = args[args.indexOf("-w") + 1];
 const cmd = args[3];
+mkdirSync(dir, { recursive: true });
 const log = (line) => appendFileSync(join(dir, "calls.log"), line + "\n");
 log(cmd);
 
 if (cmd === "init") {
+  // Like the real tool without a terminal: read one line from stdin (empty = new seed). If the
+  // caller leaves stdin open, this blocks, which is exactly the failure the locker must avoid.
+  const line = readFileSync(0, "utf8").split("\n")[0];
+  if (line.trim()) process.exit(4);
   writeFileSync(join(dir, "keys.toml"), "fake = true\n");
   console.log("Wallet initialized");
 } else if (cmd === "list-addresses") {
