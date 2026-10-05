@@ -18,10 +18,13 @@ const env = {
   network: process.env.LOCKER_NETWORK ?? "main",
   server: process.env.LIGHTWALLETD ?? "zecrocks",
   identity: process.env.LOCKER_AGE_IDENTITY ?? "",
-  checkMinutes: Number(process.env.CHECK_MINUTES ?? 30),
+  // A backstop only: the registry notifies the locker as soon as there is something to lock.
+  checkMinutes: Number(process.env.CHECK_MINUTES ?? 360),
   minHours: Number(process.env.MIN_HOURS_BETWEEN ?? 3),
   maxPerDay: Number(process.env.MAX_PER_DAY ?? 8),
-  minBalance: Number(process.env.MIN_BALANCE_ZATS ?? 40000),
+  minBalance: Number(process.env.MIN_BALANCE_ZATS ?? 15000),
+  // What one lock costs: the tiny note plus the standard fee (ZIP 317, two logical actions).
+  lockCost: Number(process.env.LOCK_COST_ZATS ?? 11000),
   maxMinedWaitMinutes: Number(process.env.MAX_MINED_WAIT_MINUTES ?? 60),
   inflightPollSeconds: Number(process.env.INFLIGHT_POLL_SECONDS ?? 60),
   port: Number(process.env.PORT ?? 8080),
@@ -152,12 +155,18 @@ async function tick() {
     const changesSinceLock = reg.epochs.filter((e) => e.epoch > lockedUpTo).reduce((n, e) => n + e.changes, 0);
     if (head.anchor || changesSinceLock === 0) return save();
 
+    // Too soon after the last lock: wake exactly when the gap ends, so changes batch into one lock.
     const last = state.locks.at(-1);
-    if (last && Date.now() - Date.parse(last.at) < env.minHours * 3_600_000) return save();
-    const today = state.locks.filter((l) => Date.now() - Date.parse(l.at) < 86_400_000).length;
-    if (today >= env.maxPerDay) {
-      state.error = `daily limit of ${env.maxPerDay} locks reached`;
-      return save();
+    const gapEnds = last ? Date.parse(last.at) + env.minHours * 3_600_000 : 0;
+    if (gapEnds > Date.now()) {
+      save();
+      return gapEnds;
+    }
+    const recent = state.locks.filter((l) => Date.now() - Date.parse(l.at) < 86_400_000);
+    if (recent.length >= env.maxPerDay) {
+      state.error = `daily limit of ${env.maxPerDay} locks reached; the next one can go out ${new Date(Date.parse(recent[0].at) + 86_400_000).toISOString()}`;
+      save();
+      return Date.parse(recent[0].at) + 86_400_000;
     }
 
     const b = await balance();
@@ -186,15 +195,48 @@ async function tick() {
   }
 }
 
-// While a lock is waiting to be mined, check every minute or so; otherwise on the normal cadence.
-async function loop() {
-  await tick();
-  const ms = state.inflight ? env.inflightPollSeconds * 1000 : env.checkMinutes * 60_000;
-  nextCheck = new Date(Date.now() + ms).toISOString();
-  setTimeout(loop, ms);
+/*
+ * Scheduling. The registry calls /notify when it publishes a record, which runs a check within
+ * seconds. Otherwise one timer decides the next check: about a minute while a lock is being mined,
+ * the end of the gap or daily cap when one is holding a lock back, and a slow backstop otherwise
+ * in case a notification was missed. Checks never overlap.
+ */
+let timer = null;
+let running = false;
+let again = false;
+
+function schedule(ms) {
+  clearTimeout(timer);
+  const wait = Math.max(1000, ms);
+  nextCheck = new Date(Date.now() + wait).toISOString();
+  timer = setTimeout(run, wait);
 }
 
+async function run() {
+  if (running) {
+    again = true;
+    return;
+  }
+  running = true;
+  const wakeAt = await tick();
+  running = false;
+  if (again) {
+    again = false;
+    return schedule(1000);
+  }
+  if (state.inflight) return schedule(env.inflightPollSeconds * 1000);
+  const backstop = env.checkMinutes * 60_000;
+  schedule(typeof wakeAt === "number" ? Math.min(wakeAt - Date.now() + 1000, backstop) : backstop);
+}
+
+const nudge = () => (running ? (again = true) : schedule(2000));
+
 createServer((req, res) => {
+  if (req.method === "POST" && req.url === "/notify") {
+    nudge();
+    res.writeHead(202, { "content-type": "application/json" }).end('{"ok":true}');
+    return;
+  }
   if (req.url !== "/status" && req.url !== "/health") {
     res.writeHead(404).end();
     return;
@@ -206,16 +248,17 @@ createServer((req, res) => {
       ok: !state.error,
       address: state.address,
       spendableZats: state.balance ? spendable(state.balance) : null,
+      locksLeft: state.balance ? Math.floor(spendable(state.balance) / env.lockCost) : null,
       lastCheck: state.lastCheck,
       nextCheck,
       lastLock: state.locks.at(-1) ?? null,
       inflight: state.inflight,
       error: state.error,
       locksToday: today,
-      limits: { checkMinutes: env.checkMinutes, minHoursBetween: env.minHours, maxPerDay: env.maxPerDay, minBalanceZats: env.minBalance },
+      limits: { checkMinutes: env.checkMinutes, minHoursBetween: env.minHours, maxPerDay: env.maxPerDay, minBalanceZats: env.minBalance, lockCostZats: env.lockCost },
       dryRun: env.dryRun,
     }),
   );
 }).listen(env.port, () => console.log(`seisin locker on :${env.port}, watching ${env.seisin}`));
 
-loop();
+run();

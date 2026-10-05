@@ -13,6 +13,7 @@ const FAKE = join(resolve("."), "test/fixtures/fake-devtool.mjs");
 const TOKEN = randomBytes(16).toString("hex");
 const SPORT = 20000 + Math.floor(Math.random() * 500);
 const CPORT = SPORT + 600;
+const LPORT = SPORT + 700; // the locker the registry notifies
 const seisin = `http://127.0.0.1:${SPORT}`;
 const dir = mkdtempSync(join(tmpdir(), "seisin-locker-"));
 const procs: ChildProcess[] = [];
@@ -38,7 +39,7 @@ before(async () => {
     res.end(JSON.stringify({ data: { [txid]: { transaction: { block_id: minedHeight } } } }));
   }).listen(CPORT);
   const s = spawn(process.execPath, ["--import", "tsx", "src/server/main.ts"], {
-    env: { ...process.env, PORT: String(SPORT), DATA_PATH: join(dir, "s.db"), SUPPLY: "8", OPERATOR_TOKEN: TOKEN, AUTO_SEAL_MINUTES: "0.01", ANCHOR_ADDRESS: "u1" + "a".repeat(120), ANCHOR_UIVK: "uivk1" + "b".repeat(120) },
+    env: { ...process.env, PORT: String(SPORT), DATA_PATH: join(dir, "s.db"), SUPPLY: "8", OPERATOR_TOKEN: TOKEN, AUTO_SEAL_MINUTES: "0.01", ANCHOR_ADDRESS: "u1" + "a".repeat(120), ANCHOR_UIVK: "uivk1" + "b".repeat(120), LOCKER_URL: `http://127.0.0.1:${LPORT}` },
     stdio: "ignore",
   });
   procs.push(s);
@@ -51,13 +52,13 @@ after(async () => {
   rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 });
 
-function locker(name: string, extra: Record<string, string> = {}, seedState?: object) {
+function locker(name: string, extra: Record<string, string> = {}, seedState?: object, fixedPort?: number) {
   const w = join(dir, name);
   if (seedState) {
     mkdirSync(w, { recursive: true });
     writeFileSync(join(w, "locker-state.json"), JSON.stringify(seedState));
   }
-  const port = 21000 + Math.floor(Math.random() * 4000);
+  const port = fixedPort ?? 21000 + Math.floor(Math.random() * 4000);
   const p = spawn(process.execPath, ["locker/locker.mjs"], {
     env: {
       ...process.env,
@@ -110,6 +111,16 @@ test("does nothing while there is nothing new to lock", async () => {
   await l.stop();
 });
 
+test("locks as soon as the registry publishes something, without waiting for its timer", async () => {
+  const l = locker("notified", { CHECK_MINUTES: "60" }, undefined, LPORT);
+  assert.ok(await until(async () => !!(await l.status())?.address));
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.doesNotMatch(l.calls(), /^pay$/m, "paid before anything changed");
+  await changeSomething();
+  assert.ok(await until(() => /^pay$/m.test(l.calls()), 8000), `no lock after the registry published; status: ${JSON.stringify(await l.status())}`);
+  await l.stop();
+});
+
 test("refuses to pay below the minimum balance, and says how to fix it", async () => {
   await changeSomething();
   const l = locker("poor", { FAKE_BALANCE: "1000", MIN_BALANCE_ZATS: "40000" });
@@ -133,6 +144,15 @@ test("respects the gap between locks and the daily cap", async () => {
   assert.ok(await until(async () => /daily limit/.test((await cap.status())?.error ?? "")));
   assert.doesNotMatch(cap.calls(), /^pay$/m);
   await cap.stop();
+});
+
+test("a lock held back by the gap goes out when the gap ends, not on the next timer", async () => {
+  const now = { locks: [{ epoch: 0, txid: "ef".repeat(32), at: new Date().toISOString(), height: 1 }], inflight: null, error: null, address: null, balance: null, lastCheck: null };
+  const l = locker("gapend", { CHECK_MINUTES: "60", MIN_HOURS_BETWEEN: "0.001" }, now); // a 3.6 s gap
+  assert.ok(await until(async () => !!(await l.status())?.lastCheck));
+  assert.doesNotMatch(l.calls(), /^pay$/m, "paid inside the gap");
+  assert.ok(await until(() => /^pay$/m.test(l.calls()), 10000), "did not lock when the gap ended");
+  await l.stop();
 });
 
 test("dry run checks everything but pays nothing", async () => {

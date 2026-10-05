@@ -1435,6 +1435,7 @@ type LockerStatus = {
   ok?: boolean;
   address?: string | null;
   spendableZats?: number | null;
+  locksLeft?: number | null;
   lastCheck?: string | null;
   nextCheck?: string | null;
   lastLock?: { epoch: number; txid: string; height?: number; at: string } | null;
@@ -1466,8 +1467,8 @@ function LockerPanel() {
   return (
     <Section title="Automatic locking" aside={<span className={s.error || s.reachable === false ? "pill wait" : "chip gold"}>{state}</span>}>
       <p className="muted">
-        A small wallet beside the registry locks the newest record on Zcash when it has changes
-        {s.limits ? `, at most every ${s.limits.minHoursBetween} hours and ${s.limits.maxPerDay} times a day` : ""}. Every lock is still checked in the browser against mainnet, like a lock paid by hand.
+        A small wallet beside the registry locks a record on Zcash as soon as it is published
+        {s.limits ? `, at least ${s.limits.minHoursBetween} hours apart and at most ${s.limits.maxPerDay} times a day, so changes close together share one lock` : ""}. Every lock is still checked in the browser against mainnet, like a lock paid by hand.
       </p>
       {s.error && <p className="alert">{s.error}</p>}
       <dl className="kv">
@@ -1484,6 +1485,7 @@ function LockerPanel() {
         <dt>Balance</dt>
         <dd>
           {zec(s.spendableZats)}
+          {s.locksLeft != null ? ` · about ${s.locksLeft} lock${s.locksLeft === 1 ? "" : "s"} left` : ""}
           {s.limits && s.spendableZats != null && s.spendableZats < s.limits.minBalanceZats * 2 ? " · low, top up soon" : ""}
         </dd>
         <dt>Last check</dt>

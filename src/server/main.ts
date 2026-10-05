@@ -83,6 +83,14 @@ if (!store.initialized()) {
   console.log(`created registry "${env.collection}" with supply ${env.supply}`);
 }
 
+// ---- telling the locker ----
+
+/** Lets the locker know there is a new record, so it can lock it now instead of on its next check. */
+function notifyLocker() {
+  if (!env.lockerUrl) return;
+  fetch(env.lockerUrl + "/notify", { method: "POST", signal: AbortSignal.timeout(3000) }).catch(() => {});
+}
+
 // ---- automatic sealing ----
 
 let nextSealAt: number | null = null;
@@ -94,6 +102,7 @@ if (env.autoSealMinutes > 0) {
     if (store.pending().length === 0) return;
     try {
       const row = store.seal();
+      notifyLocker();
       console.log(`sealed epoch ${row.record.epoch} automatically (${row.changes.length} change${row.changes.length === 1 ? "" : "s"})`);
     } catch (e) {
       console.error("automatic seal failed:", (e as Error).message);
@@ -283,6 +292,7 @@ async function api(req: IncomingMessage, res: ServerResponse, path: string) {
   if (m === "POST" && path === "/api/operator/seal") {
     requireOperator(req);
     const row = store.seal();
+    notifyLocker();
     return send(res, 200, { sealed: row.record.epoch, request: anchorRequest(row.record.epoch) });
   }
 
@@ -346,6 +356,7 @@ async function api(req: IncomingMessage, res: ServerResponse, path: string) {
     }
     const done = [];
     for (const a of (anchors ?? []) as { epoch: number; txid: string }[]) done.push(await recordAnchor(a.epoch, a.txid));
+    notifyLocker();
     return send(res, 200, { head: store.epochs().length - 1, anchored: done.map((d) => ({ epoch: d.anchored, height: d.height })) });
   }
 
