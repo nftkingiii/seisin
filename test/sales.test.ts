@@ -107,12 +107,14 @@ test("lists what is for sale, leaving out tokens promised to existing holders", 
   assert.ok(!s1.forSale.includes(5), "a token with an open claim code was offered for sale");
 });
 
-test("waits for the payment to be mined, then refuses a transaction the sales key cannot read", async () => {
+test("waits for the payment to be mined, then blames a broken sales key on the seller, not the buyer", async () => {
   mined = -1;
   const early = await buy(vector.txid);
   assert.equal(early.status, 425);
   mined = 3510000;
   const r = await buy(vector.txid);
-  assert.equal(r.status, 422, JSON.stringify(r.body));
+  assert.equal(r.status, 503, JSON.stringify(r.body));
+  assert.match(r.body.error, /seller's sales key/);
+  assert.equal((await buy(vector.txid)).status, 503, "a payment refused for a seller fault was recorded as spent");
   assert.equal((await buy("zz")).status, 400);
 });

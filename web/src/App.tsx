@@ -658,12 +658,12 @@ function VaultTab({ view, log, refresh, intent, done }: { view: RegistryView; lo
               <div>
                 <strong>{backed ? "Backup confirmed" : "Back up your vault"}</strong>
                 {backed ? (
-                  <p>You typed it back correctly.</p>
+                  <p>Saved. You can show it again or download another copy under Backup.</p>
                 ) : (
                   <BackupConfirm
-                    onDone={() => {
+                    onDone={(quiet) => {
                       setBacked(true);
-                      toast(true, "Backup confirmed.");
+                      if (!quiet) toast(true, "Backup confirmed.");
                     }}
                   />
                 )}
@@ -827,11 +827,11 @@ function ClaimRequest({ view, intent, refresh, onDone }: { view: RegistryView; i
   );
 }
 
-function BackupConfirm({ onDone }: { onDone: () => void }) {
+function BackupConfirm({ onDone }: { onDone: (quiet?: boolean) => void }) {
   const [stage, setStage] = useState<"show" | "check" | "file">("show");
   const [tail, setTail] = useState("");
   const [err, setErr] = useState<string | null>(null);
-  if (stage === "file") return <EncryptedBackup onSaved={onDone} onCancel={() => setStage("show")} />;
+  if (stage === "file") return <EncryptedBackup onSaved={() => onDone(true)} onCancel={() => setStage("show")} />;
   return stage === "show" ? (
     <>
       <p>Write this down somewhere offline. Anyone with it can move your tokens, and without it a lost browser means lost tokens.</p>

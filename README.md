@@ -24,9 +24,10 @@ The full protocol and the privacy boundary (what anyone, the operator and a veri
 | Keyless anchor check | **Real.** The browser fetches the transaction bytes from mainnet and checks the note and memo with [zcash-delivery-proof](https://github.com/saplingcash/zcash-delivery-proof) (vendored WASM, pinned commit and hash in `vendor/zcash-delivery-proof/SOURCE.md`). |
 | Transfers, proofs, audit | **Real.** Ed25519 signatures, a Merkle tree and a hash-chained log, all checked in the browser. |
 | The `deeds` collection | **Demo.** Tokens are handed out free ("demo issuance") so anyone can try the flow. A real collection would sell each token's first transfer for ZEC. |
-| Payment ↔ transfer binding | **Not enforced in v1.** A transfer carries a `ref` field for a hash of the payment's delivery proof, but a change is valid without one. |
+| Paid first sales | **Built and tested, not switched on in the live deployment.** A buyer pays ZEC to the collection's sales address with a memo naming a fresh key from their vault; the server reads it with the sales viewing key and sets the transfer's `ref` to the hash of the payment's delivery proof. A token taken before the payment arrives is marked for refund. |
+| Payment ↔ transfer binding | **Only for sales.** A sold transfer's `ref` binds its payment, but the protocol still accepts a change without one. |
 | Publishing records | **Automatic.** Signed changes are published as a new record every 5 minutes. |
-| Locking on Zcash | **Manual in v1.** The operator pays each lock note from a Zcash wallet; the Operator tab shows the payment request as a QR code. A proof passes only against a locked record. |
+| Locking on Zcash | **Manual, with automatic locking built.** The operator can pay each lock note from any Zcash wallet (the Operator tab shows the request as a QR code). A small capped wallet service (`locker/`) locks each new record as soon as it is published; it runs on mainnet in dry-run mode until its wallet is funded. A proof passes only against a locked record. |
 | Claim codes | **Real, not yet used on mainnet.** The flow is built and tested; no claim payment has been sent yet. |
 
 ## Try it
@@ -44,6 +45,21 @@ No vault yet? In **Vault**, choose **Use the public demo vault**. It holds token
 > **Public demo key.** The demo vault's backup is published on purpose: `0d796d0bf9e20562bda2e554cc74fbb19bc5703c54f14e4822d0003e9af944b7`. It holds nothing of value, and the server refuses any transfer signed by its keys, so it can prove but never move its token. Never use it as a real vault.
 
 **Transfers:** the receiver makes a **receive link** in their vault. The holder opens it, reviews the transfer, and holds the button to sign it over. It takes effect in the next published record.
+
+## Gate a site on holding a token
+
+Any site can let holders in without learning who they are:
+
+```html
+<script src="https://seisin.up.railway.app/gate.js"></script>
+<button data-seisin-gate>Verify with Seisin</button>
+```
+
+The button asks Seisin for a one-time challenge bound to the site's origin, sends the visitor to their vault to prove a token, and brings them back with the proof. Seisin checks the proof against the record locked on Zcash, once, within 10 minutes, and only for the origin that asked. The page then receives a `seisin:verified` event with the token number and record. A demo is at [`/gate-demo.html`](https://seisin.up.railway.app/gate-demo.html).
+
+## Backups
+
+A vault is one secret in the browser. Holders can write it down, or download it as a file encrypted with a passphrase (PBKDF2-SHA256, 600,000 rounds, then AES-GCM) and restore from that file on another device.
 
 ## Bringing existing holders in
 

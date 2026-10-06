@@ -320,7 +320,10 @@ async function api(req: IncomingMessage, res: ServerResponse, path: string) {
     try {
       p = readPurchase(hex, env.salesUivk, store.collection(), env.priceZats, { make, check });
     } catch (e) {
-      throw new HttpError(422, (e as Error).message);
+      const msg = (e as Error).message;
+      // A bad sales key is the seller's setup problem, not something the buyer can fix.
+      if (/viewing key/.test(msg)) throw new HttpError(503, "the seller's sales key is not set up correctly; your payment is safe, try again later");
+      throw new HttpError(422, msg);
     }
     const s = store.state();
     const k = issuerKey(p.tokenId);
