@@ -123,7 +123,14 @@ export async function audit(view: RegistryView, log: Log): Promise<Step[]> {
     steps.push({ label: "Locked on Zcash", ok: false, detail: (e as Error).message });
   }
   if (anchored.epoch < view.head)
-    steps.push({ label: "Newer records", ok: true, detail: `records ${anchored.epoch + 1}–${view.head} are published but not locked on Zcash yet` });
+    steps.push({
+      label: "Newer records",
+      ok: true,
+      detail:
+        anchored.epoch + 1 === view.head
+          ? `record ${view.head} is published but not locked on Zcash yet`
+          : `records ${anchored.epoch + 1}–${view.head} are published but not locked on Zcash yet`,
+    });
   return steps;
 }
 
