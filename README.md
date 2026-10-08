@@ -20,14 +20,14 @@ The full protocol and the privacy boundary (what anyone, the operator and a veri
 
 | | Status |
 |---|---|
-| Anchors | **Real, Zcash mainnet.** Epoch 0: [`d455a8d2…71a2`](https://blockchair.com/zcash/transaction/d455a8d2daa6bdb67d7f82fdf9f04df9c8b96f54a30c524add95c8148c1471a2), height 3,501,709. Epoch 1: [`aef09300…6f2d`](https://blockchair.com/zcash/transaction/aef09300bba856b4b2996e5c82454196961ea0aaf334c8eccec66b8e765c6f2d), height 3,501,716. Both are Ironwood notes with the record in the memo. |
+| Anchors | **Real, Zcash mainnet.** Epoch 0: [`d455a8d2…71a2`](https://blockchair.com/zcash/transaction/d455a8d2daa6bdb67d7f82fdf9f04df9c8b96f54a30c524add95c8148c1471a2), height 3,501,709. Epoch 1: [`aef09300…6f2d`](https://blockchair.com/zcash/transaction/aef09300bba856b4b2996e5c82454196961ea0aaf334c8eccec66b8e765c6f2d), height 3,501,716. Epoch 2: [`a4d7e5f8…a6ee`](https://blockchair.com/zcash/transaction/a4d7e5f8acebe034ab00d00d1263f66633cd97b3db7882a42de8f7219bf2a6ee), height 3,510,437, paid by the locker on its own. All are Ironwood notes with the record in the memo. |
 | Keyless anchor check | **Real.** The browser fetches the transaction bytes from mainnet and checks the note and memo with [zcash-delivery-proof](https://github.com/saplingcash/zcash-delivery-proof) (vendored WASM, pinned commit and hash in `vendor/zcash-delivery-proof/SOURCE.md`). |
 | Transfers, proofs, audit | **Real.** Ed25519 signatures, a Merkle tree and a hash-chained log, all checked in the browser. |
 | The `deeds` collection | **Demo.** Tokens are handed out free ("demo issuance") so anyone can try the flow. A real collection would sell each token's first transfer for ZEC. |
 | Paid first sales | **Built and tested, not switched on in the live deployment.** A buyer pays ZEC to the collection's sales address with a memo naming a fresh key from their vault; the server reads it with the sales viewing key and sets the transfer's `ref` to the hash of the payment's delivery proof. A token taken before the payment arrives is marked for refund. |
 | Payment ↔ transfer binding | **Only for sales.** A sold transfer's `ref` binds its payment, but the protocol still accepts a change without one. |
 | Publishing records | **Automatic.** Signed changes are published as a new record every 5 minutes. |
-| Locking on Zcash | **Manual, with automatic locking built.** The operator can pay each lock note from any Zcash wallet (the Operator tab shows the request as a QR code). A small capped wallet service (`locker/`) locks each new record as soon as it is published; it runs on mainnet in dry-run mode until its wallet is funded. A proof passes only against a locked record. |
+| Locking on Zcash | **Automatic, on mainnet.** A small capped wallet service (`locker/`) locks each new record as soon as it is published: at most 3 locks a day, at least 3 hours apart, about 0.00011 ZEC each. Record 2 was its first lock. The operator can still pay a lock by hand from any Zcash wallet (the Operator tab shows the request as a QR code). A proof passes only against a locked record. |
 | Claim codes | **Real, not yet used on mainnet.** The flow is built and tested; no claim payment has been sent yet. |
 
 ## Try it
@@ -83,6 +83,12 @@ npm start               # http://localhost:8787
 ```
 
 Tests: `npm test` (set `LIVE=1` to also check a real mainnet note).
+
+Audit the live registry from a terminal, the same way the browser does (replay the log, check every signature and each record's lock note on mainnet, no key):
+
+```bash
+node --import tsx scripts/audit-live.ts https://seisin.up.railway.app
+```
 
 ## Layout
 
